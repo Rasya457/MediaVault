@@ -1,0 +1,50 @@
+﻿{
+  "version": 1,
+  "providers": {
+    "tiktok_primary": {
+      "url": "https://tikdownloader.io/api/ajaxSearch",
+      "method": "POST",
+      "enabled": true
+    },
+    "tiktok_fallback": {
+      "url": "https://www.tikwm.com/api/",
+      "method": "GET",
+      "enabled": true
+    },
+    "instagram_primary": {
+      "url": "https://indown.io/en5",
+      "method": "GET",
+      "enabled": true
+    },
+    "instagram_fallback": {
+      "url": "https://snapsave.app/action.php",
+      "method": "POST",
+      "enabled": true
+    },
+    "youtube_primary": {
+      "url": "https://ytmp3.gg/api/json",
+      "method": "GET",
+      "enabled": false
+    },
+    "youtube_fallback": {
+      "url": "https://yt1s.com/api/ajaxConvert",
+      "method": "POST",
+      "enabled": false
+    },
+    "youtube_innertube": {
+      "url": "https://www.youtube.com/youtubei/v1/player",
+      "method": "POST",
+      "enabled": true
+    },
+    "spotify_primary": {
+      "url": "https://spotidown.app/api",
+      "method": "GET",
+      "enabled": false
+    },
+    "spotify_fallback": {
+      "url": "https://spotifydown.com/api/download",
+      "method": "GET",
+      "enabled": false
+    }
+  }
+}

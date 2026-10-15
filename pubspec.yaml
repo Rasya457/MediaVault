@@ -1,0 +1,51 @@
+name: mediavault
+description: "MORI - Media downloader"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  dio: ^5.11.1
+  cookie_jar: ^4.0.8
+  dio_cookie_manager: ^3.3.0
+  gal: ^2.3.3
+  path_provider: ^2.1.5
+  receive_sharing_intent: ^1.9.0
+  font_awesome_flutter: ^11.0.0
+  flutter_svg: ^2.3.0
+  video_player: ^2.14.1
+  ffmpeg_kit_flutter_new_min: ^3.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/inter/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/inter/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/inter/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/inter/Inter-Bold.ttf
+          weight: 700
+
+  assets:
+    - lib/services/providers/endpoints.json
+    - assets/icons/rednote.svg
+    - assets/icons/terabox.svg
+    - assets/fonts/inter/
