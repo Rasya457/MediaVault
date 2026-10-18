@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../core/theme/design_tokens.dart';
 import '../../../services/providers/models.dart';
 
@@ -33,7 +34,7 @@ class QualitySelector extends StatelessWidget {
   }
 }
 
-class _QualityTile extends StatelessWidget {
+class _QualityTile extends StatefulWidget {
   const _QualityTile({
     required this.quality,
     required this.selected,
@@ -45,56 +46,107 @@ class _QualityTile extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_QualityTile> createState() => _QualityTileState();
+}
+
+class _QualityTileState extends State<_QualityTile> {
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
-    final bg = selected ? MoriColors.ink : MoriColors.surface;
-    final fg = selected ? MoriColors.surface : MoriColors.ink;
+    final scheme = MoriScheme.of(context);
+    final selected = widget.selected;
+    // Seleksi: tint aksen + border aksen penuh (bukan biru Tailwind).
+    final bg = selected ? scheme.accentTint : scheme.surface;
+    final borderColor = selected ? scheme.accent : scheme.hairline;
+    final borderWidth = selected ? MoriBorder.selected : MoriBorder.tile;
+    final fg = scheme.ink;
+
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: bg,
-          border: Border.all(color: MoriColors.ink, width: 2),
-          borderRadius: BorderRadius.circular(MoriRadius.button),
-          boxShadow: selected
-              ? null
-              : const [
-                  BoxShadow(
-                    color: MoriColors.ink,
-                    offset: Offset(2, 2),
-                    blurRadius: 0,
-                  ),
-                ],
-        ),
-        child: Row(
-          children: [
-            Icon(
-              selected
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_unchecked,
-              color: fg,
-              size: 22,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                quality.label,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: fg,
+      onTapDown: (_) {
+        HapticFeedback.selectionClick();
+        setState(() => _pressed = true);
+      },
+      onTapUp: (_) {
+        setState(() => _pressed = false);
+        widget.onTap();
+      },
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.97 : 1.0,
+        duration: const Duration(milliseconds: 100),
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: bg,
+            border: Border.all(color: borderColor, width: borderWidth),
+            // 12px: konsisten dengan skala tile lain (bukan pill).
+            borderRadius: BorderRadius.circular(MoriRadius.tile),
+            boxShadow: MoriShadow.soft,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                selected
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                color: selected
+                    ? scheme.accent
+                    : scheme.faint,
+                size: 22,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.quality.label,
+                      style: TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: MoriText.tileLetterSpacing,
+                        color: fg,
+                      ),
+                    ),
+                    if (widget.quality.sizeLabel != null ||
+                        widget.quality.needsMerge)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          [
+                            if (widget.quality.sizeLabel != null)
+                              widget.quality.sizeLabel!,
+                            if (widget.quality.needsMerge) 'PERLU GABUNG AUDIO',
+                          ].join(' • '),
+                          style: TextStyle(
+                            fontFamily: 'Geist',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: scheme.secondary,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-            ),
-            Text(
-              '.${quality.extension}',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: fg.withValues(alpha: 0.7),
+              Text(
+                '.${widget.quality.extension}',
+                style: TextStyle(
+                  fontFamily: 'Geist',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.0,
+                  color: scheme.secondary,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -56,6 +56,13 @@ class _FakeMerger implements MediaMerger {
     required String outputPath,
   }) async =>
       File(outputPath);
+
+  @override
+  Future<File> convertToMp3({
+    required File input,
+    required String outputPath,
+  }) async =>
+      File(outputPath);
 }
 
 class _FakeStorage extends StorageService {
@@ -127,6 +134,34 @@ void main() {
 
       expect(c.status, DownloadStatus.success);
       expect(storage.calls, ['video']);
+    });
+
+    test('unduh mp3 -> panggil convertToMp3 + simpan ke audio', () async {
+      final dl = _FakeDownloads()..fileToReturn = File('/tmp/raw_song.mp4');
+      final storage = _FakeStorage();
+      final merger = _FakeMerger();
+      final c = DownloadController(
+        downloadService: dl,
+        storageService: storage,
+        mediaMerger: merger,
+      );
+
+      const quality = MediaQuality(
+        label: 'Audio MP3',
+        itag: 'https://cdn.example/song.mp4',
+        extension: 'mp3',
+        hasAudio: true,
+      );
+
+      await c.downloadMedia(
+        url: quality.itag,
+        filename: 'song.mp3',
+        quality: quality,
+      );
+
+      expect(c.status, DownloadStatus.success);
+      expect(c.savedLabel, contains('Audio tersimpan'));
+      expect(storage.calls, ['audio']);
     });
 
     test('gagal unduh -> error + pesan ramah', () async {

@@ -1,21 +1,52 @@
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediavault/core/network/api_client.dart' as client_lib;
 import 'package:mediavault/services/providers/youtube_provider.dart';
 import 'package:mediavault/services/providers/provider.dart';
 import 'package:mediavault/services/providers/remote_config.dart';
 import '../helpers/mock_remote_config.dart';
 import '../helpers/mock_dio.dart';
 
+/// Adapter rute: jawab berdasarkan method + path + isi body.
+/// Dipakai untuk alur multi-langkah (convert -> polling status).
+class _RouteAdapter implements HttpClientAdapter {
+  _RouteAdapter(this.handler);
+
+  final Map<String, dynamic> Function(RequestOptions options) handler;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    return ResponseBody.fromString(
+      jsonEncode(handler(options)),
+      200,
+      headers: {'content-type': ['application/json']},
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
 void main() {
+  final realAdapter = client_lib.httpClient.httpClientAdapter;
+
   setUp(() {
+    ytmp3PollDelay = Duration.zero;
     injectMockEndpoints({
       'youtube_primary': EndpointEntry(
-        url: 'https://ytmp3.gg/api/json',
-        method: 'GET',
+        url: 'https://hub.convert1s.com/api/download',
+        method: 'POST',
         enabled: true,
       ),
       'youtube_fallback': EndpointEntry(
-        url: 'https://yt1s.com/api/ajaxConvert',
-        method: 'POST',
+        url: 'https://a.ymcdn.org/api/v1/init',
+        method: 'GET',
         enabled: true,
       ),
       'youtube_innertube': EndpointEntry(
@@ -26,7 +57,11 @@ void main() {
     });
   });
 
-  tearDown(() => RemoteConfig.instance.resetCache());
+  tearDown(() {
+    RemoteConfig.instance.resetCache();
+    client_lib.httpClient.httpClientAdapter = realAdapter;
+    ytmp3PollDelay = const Duration(milliseconds: 1500);
+  });
 
   group('YouTube canHandle', () {
     final p = YouTubePrimaryProvider();
@@ -53,42 +88,104 @@ void main() {
     });
   });
 
-  group('YouTubePrimaryProvider fetchInfo', () {
-    test('parse respons sukses dari ytmp3.gg', () async {
-      setupMockDio(
-        getResponseData: {
-          'status': 'ok',
-          'result': {
-            'url': 'https://cdn.ytmp3.gg/video.mp4',
-            'title': 'Rick Astley - Never Gonna Give You Up',
-            'thumbnail': 'https://i.ytimg.com/vi/dQw4/hq720.jpg',
-            'duration': 213,
-          },
-        },
-      );
+  group('YouTubePrimaryProvider fetchInfo (convert1s hub)', () {
+    Map<String, dynamic> ggHandler(RequestOptions options) {
+      final path = options.path;
+      if (options.method.toUpperCase() == 'GET' &&
+          path.contains('oembed')) {
+        return {
+          'title': 'Rick Astley - Never Gonna Give You Up',
+          'thumbnail_url': 'https://i.ytimg.com/vi/dQw4/hq720.jpg',
+        };
+      }
+      if (options.method.toUpperCase() == 'POST') {
+        final data = (options.data as Map?)?.cast<String, dynamic>() ?? {};
+        final output =
+            (data['output'] as Map?)?.cast<String, dynamic>() ?? {};
+        final quality = '${output['quality'] ?? ''}';
+        final tag = quality.isEmpty ? 'mp3' : quality;
+        return {'statusUrl': 'https://hub.convert1s.com/status/$tag'};
+      }
+      // Polling status -> completed langsung.
+      final tag = path.split('/').last;
+      return {
+        'status': 'completed',
+        'downloadUrl': 'https://cdn.gg/$tag.mp4',
+        'selectedQuality': tag == 'mp3' ? '' : tag,
+      };
+    }
+
+    test('convert 720p + 360p + mp3 -> 3 kualitas', () async {
+      client_lib.httpClient.httpClientAdapter = _RouteAdapter(ggHandler);
       final info = await YouTubePrimaryProvider().fetchInfo(
         'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
       );
       expect(info.title, contains('Rick Astley'));
-      expect(info.durationSec, equals(213));
-      expect(info.qualities, isNotEmpty);
+      expect(info.thumbnail, contains('ytimg'));
+      expect(info.qualities.map((q) => q.label).toList(), [
+        'MP4 720p',
+        'MP4 360p',
+        'MP3',
+      ]);
+      expect(info.qualities.last.extension, 'mp3');
+      expect(info.providerName, 'Ytmp3');
+    });
+
+    test('semua convert ditolak -> noResult', () async {
+      client_lib.httpClient.httpClientAdapter = _RouteAdapter((options) {
+        if (options.method.toUpperCase() == 'GET' &&
+            options.path.contains('oembed')) {
+          return {'title': 'X'};
+        }
+        return {'error': true};
+      });
+      expect(
+        () => YouTubePrimaryProvider().fetchInfo(
+          'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        ),
+        throwsA(isA<ProviderException>()),
+      );
     });
   });
 
-  group('YouTubeFallbackProvider fetchInfo', () {
-    test('parse respons sukses dari yt1s', () async {
-      setupMockDio(
-        postResponseData: {
-          'status': 'ok',
-          'd_url': 'https://cdn.yt1s.com/video.mp4',
-          'title': 'Never Gonna Give You Up',
-          'fquality': '720',
-        },
-      );
+  group('YouTubeFallbackProvider fetchInfo (ycdn mobi)', () {
+    test('init -> convert -> MP4 + MP3', () async {
+      client_lib.httpClient.httpClientAdapter = _RouteAdapter((options) {
+        final path = options.path;
+        if (options.method.toUpperCase() == 'GET' &&
+            path.contains('oembed')) {
+          return {'title': 'Never Gonna Give You Up'};
+        }
+        if (path.contains('/api/v1/init')) {
+          return {'convertURL': 'https://ycdn.example/convert'};
+        }
+        final fmt = options.queryParameters['f']?.toString() ??
+            RegExp(r'[?&]f=([a-z0-9]+)').firstMatch(path)?.group(1) ??
+            'mp4';
+        return {
+          'downloadURL': 'https://cdn.mobi/video.$fmt',
+          'progressURL': 'https://ycdn.example/progress',
+          'progress': 3,
+        };
+      });
       final info = await YouTubeFallbackProvider().fetchInfo(
         'https://youtu.be/dQw4w9WgXcQ',
       );
-      expect(info.qualities.first.label, contains('720'));
+      expect(info.qualities.map((q) => q.label).toList(), ['MP4', 'MP3']);
+      expect(info.providerName, 'Ytmp3Mobi');
+    });
+
+    test('init error -> noResult', () async {
+      client_lib.httpClient.httpClientAdapter = _RouteAdapter((options) {
+        if (options.path.contains('oembed')) return {'title': 'X'};
+        return {'error': true};
+      });
+      expect(
+        () => YouTubeFallbackProvider().fetchInfo(
+          'https://youtu.be/dQw4w9WgXcQ',
+        ),
+        throwsA(isA<ProviderException>()),
+      );
     });
 
     test('lempar ProviderException untuk URL tanpa video ID', () {
@@ -96,6 +193,29 @@ void main() {
         () => YouTubeFallbackProvider().fetchInfo('https://youtube.com/'),
         throwsA(isA<ProviderException>()),
       );
+    });
+  });
+
+  group('YouTubeThirdPartyProvider (gg -> mobi)', () {
+    test('gg gagal total -> mobi dipakai', () async {
+      client_lib.httpClient.httpClientAdapter = _RouteAdapter((options) {
+        final path = options.path;
+        if (path.contains('oembed')) return {'title': 'Chain Video'};
+        if (path.contains('convert1s')) return {'error': true};
+        if (path.contains('/api/v1/init')) {
+          return {'convertURL': 'https://ycdn.example/convert'};
+        }
+        return {
+          'downloadURL': 'https://cdn.mobi/video.mp4',
+          'progressURL': 'https://ycdn.example/progress',
+          'progress': 3,
+        };
+      });
+      final info = await YouTubeThirdPartyProvider().fetchInfo(
+        'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      );
+      expect(info.providerName, 'Ytmp3Mobi');
+      expect(info.qualities, isNotEmpty);
     });
   });
 

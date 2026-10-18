@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../../core/network/api_client.dart';
 import 'provider.dart';
@@ -74,50 +74,6 @@ String? decodeSnapSave(String script) {
   return utf8.decode(byteValues, allowMalformed: true);
 }
 
-/// Ambil URL unduhan dari HTML dengan beberapa varian markup.
-List<String> _extractLinks(String html, String mustContain) {
-  final urls = <String>[];
-  final seen = <String>{};
-  void add(String? u) {
-    final v = (u ?? '').replaceAll(r'\/', '/');
-    if (v.startsWith('http') && v.contains(mustContain) && seen.add(v)) {
-      urls.add(v);
-    }
-  }
-
-  final q = String.fromCharCode(34);
-  final qs = String.fromCharCode(39);
-  final hrefPat = RegExp('href=[$q$qs]([^$q$qs]+)[$q$qs]');
-  final dataPat = RegExp('data-(?:url|href)=[$q$qs]([^$q$qs]+)[$q$qs]');
-  final jsonPat = RegExp('[$q$qs]contentUrl[$q$qs]\\s*:\\s*[$q$qs]([^$q$qs]+)[$q$qs]');
-  for (final m in hrefPat.allMatches(html)) {
-    add(m.group(1));
-  }
-  for (final m in dataPat.allMatches(html)) {
-    add(m.group(1));
-  }
-  for (final m in jsonPat.allMatches(html)) {
-    add(m.group(1));
-  }
-  return urls;
-}
-
-Future<String> _getPlain(String url) async {
-  try {
-    final res = await httpClient.get<String>(
-      url,
-      options: Options(responseType: ResponseType.plain),
-    );
-    return res.data ?? '';
-  } on DioException catch (e) {
-    throw ProviderException(
-      message: 'endpoint Instagram tidak merespons (${e.type.name})',
-      kind: ProviderErrorKind.providerDown,
-      underlyingError: e,
-    );
-  }
-}
-
 Future<String> _postForm(
   String url,
   Map<String, String> fields, {
@@ -164,9 +120,89 @@ String _resolveQuality(MediaInfo info, String quality) {
   }
   if (quality == 'best') return info.qualities.first.itag;
   return info.qualities
-      .firstWhere((q) => q.itag == quality,
+      .firstWhere((q) => q.itag == quality || q.label == quality,
           orElse: () => info.qualities.first)
       .itag;
+}
+
+/// Label unik untuk daftar link sejenis: satu item -> [single],
+/// banyak item -> "$single 1", "$single 2", ...
+String _numbered(String single, int index, int total) =>
+    total <= 1 ? single : '$single $index';
+
+/// Tebak ekstensi dari URL unduhan Instagram.
+String _guessExtension(String url) {
+  final lower = url.toLowerCase();
+  if (lower.contains('.mp4')) return 'mp4';
+  if (lower.contains('.jpg') || lower.contains('.jpeg')) return 'jpg';
+  if (lower.contains('.png')) return 'png';
+  if (lower.contains('.heic')) return 'heic';
+  if (lower.contains('.webp')) return 'webp';
+  if (lower.contains('cdninstagram.com')) return 'jpg';
+  return 'mp4';
+}
+
+/// Tebak foto vs video dari URL, termasuk sniff payload JWT
+/// (pola referensi: token=header.payload.sig berisi ekstensi asli).
+bool _isPhotoUrl(String url) {
+  final lower = url.toLowerCase();
+  if (lower.contains('.mp4') ||
+      lower.contains('.mov') ||
+      lower.contains('.webm') ||
+      lower.contains('.mkv')) {
+    return false;
+  }
+  if (lower.contains('.jpg') ||
+      lower.contains('.jpeg') ||
+      lower.contains('.png') ||
+      lower.contains('.webp') ||
+      lower.contains('.heic')) {
+    return true;
+  }
+  try {
+    final tokenMatch = RegExp(r'token=([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)')
+        .firstMatch(url);
+    if (tokenMatch != null) {
+      var payload = tokenMatch.group(1)!.split('.')[1]
+          .replaceAll('-', '+')
+          .replaceAll('_', '/');
+      payload = payload.padRight(
+        payload.length + (4 - payload.length % 4) % 4, '=');
+      final decoded = utf8.decode(base64.decode(payload), allowMalformed: true);
+      if (RegExp(r'\.(jpe?g|png|webp)(\?|"|$)').hasMatch(decoded)) {
+        return true;
+      }
+      if (RegExp(r'\.(mp4|mov|webm|mkv)(\?|"|$)').hasMatch(decoded)) {
+        return false;
+      }
+    }
+  } catch (_) {}
+  // Default: video (link unduhan IG mayoritas MP4).
+  return false;
+}
+
+/// Judul dari path URL: reel/ID -> "Instagram Reel (ID)".
+String _instagramTitle(String url) {
+  final uri = Uri.tryParse(url);
+  final segs = uri?.pathSegments.where((s) => s.isNotEmpty).toList() ?? [];
+  String kind = 'Post';
+  String id = '';
+  for (var i = 0; i < segs.length; i++) {
+    final s = segs[i].toLowerCase();
+    if (s == 'reel' || s == 'reels') {
+      kind = 'Reel';
+      if (i + 1 < segs.length) id = segs[i + 1];
+    } else if (s == 'p') {
+      kind = 'Post';
+      if (i + 1 < segs.length) id = segs[i + 1];
+    } else if (s == 'tv') {
+      kind = 'Video';
+      if (i + 1 < segs.length) id = segs[i + 1];
+    } else if (s == 'stories') {
+      kind = 'Story';
+    }
+  }
+  return id.isEmpty ? 'Instagram $kind' : 'Instagram $kind ($id)';
 }
 
 class InstagramPrimaryProvider implements MediaProvider {
@@ -176,6 +212,9 @@ class InstagramPrimaryProvider implements MediaProvider {
   @override
   bool canHandle(String url) => _canHandleInstagram(url);
 
+  /// Alur indown.net (pola referensi coflyn/Mori "indown"): POST ajaxSearch
+  /// form {q, vt:reel, t:media, lang:en, v:v2}, respons JSON {data: html},
+  /// lalu parse kotak unduhan per item carousel. Ditulis ulang dalam Dart.
   @override
   Future<MediaInfo> fetchInfo(String url) async {
     final cfg = await RemoteConfig.instance.get(_kPrimaryId);
@@ -186,62 +225,59 @@ class InstagramPrimaryProvider implements MediaProvider {
       );
     }
 
-    final tokenPage = cfg.url;
-    final page = await _getPlain(tokenPage);
-    final token =
-        RegExp(r'name="_token" value="([^"]+)"').firstMatch(page)?.group(1);
-    if (token == null || token.isEmpty) {
-      throw const ProviderException(
-        message: 'indown: token sesi tidak ditemukan.',
+    final canonical = _canonicalUrl(url);
+    late final Map<String, dynamic> body;
+    try {
+      final res = await httpClient.post<Map<String, dynamic>>(
+        cfg.url,
+        data: {
+          'q': canonical,
+          'vt': 'reel',
+          't': 'media',
+          'lang': 'en',
+          'v': 'v2',
+        },
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': 'https://indown.net',
+            'Referer': 'https://indown.net/',
+          },
+        ),
+      );
+      body = res.data ?? {};
+    } on DioException catch (e) {
+      throw ProviderException(
+        message: 'endpoint Instagram tidak merespons (${e.type.name})',
         kind: ProviderErrorKind.providerDown,
+        underlyingError: e,
       );
     }
 
-    final origin = Uri.parse(tokenPage).origin;
-    final html = await _postForm(
-      '$origin/download',
-      {
-        'referer': tokenPage,
-        'locale': 'en',
-        '_token': token,
-        'link': _canonicalUrl(url),
-      },
-      referer: tokenPage,
-    );
-
-    final fetchLinks = _extractLinks(html, 'indown.io/fetch?');
-    final directLinks = [
-      ..._extractLinks(html, '.mp4'),
-      ..._extractLinks(html, '.jpg'),
-      ..._extractLinks(html, '.jpeg'),
-      ..._extractLinks(html, '.png'),
-      ..._extractLinks(html, '.heic'),
-      ..._extractLinks(html, 'cdninstagram.com'),
-    ].where((l) => !l.contains('indown.io')).toSet().toList();
-
-    if (fetchLinks.isEmpty && directLinks.isEmpty) {
+    final html = (body['data'] ?? '').toString();
+    if (html.isEmpty) {
       throw ProviderException(
-        message:
-            'indown: tidak ada link unduhan ditemukan${_pageHint(html)}.',
+        message: 'indown: ${(body['message'] ?? 'tidak ada hasil')}. '
+            'Postingan mungkin privat.',
+        kind: ProviderErrorKind.noResult,
+      );
+    }
+
+    final qualities = _parseIndownItems(html);
+    if (qualities.isEmpty) {
+      throw ProviderException(
+        message: 'indown: tidak ada link unduhan ditemukan${_pageHint(html)}.',
         kind: ProviderErrorKind.noResult,
       );
     }
 
     return MediaInfo(
-      title: 'Instagram Media',
+      title: _instagramTitle(url),
       author: 'Instagram',
-      thumbnail: null,
+      thumbnail: _firstThumbnail(html, qualities),
       durationSec: null,
-      qualities: [
-        for (final link in fetchLinks)
-          MediaQuality(label: 'Video HD', itag: link),
-        for (final link in directLinks)
-          MediaQuality(
-            label: 'Video (direct)',
-            itag: link,
-            extension: link.contains('.mp4') ? 'mp4' : 'jpg',
-          ),
-      ],
+      qualities: qualities,
       source: 'third-party',
       providerName: providerName,
     );
@@ -250,6 +286,96 @@ class InstagramPrimaryProvider implements MediaProvider {
   @override
   Future<String> fetchDownloadUrl(String url, {String quality = 'best'}) async =>
       _resolveQuality(await fetchInfo(url), quality);
+}
+
+/// Parse hasil indown: kumpulkan semua link unduhan sesuai urutan dokumen,
+/// klasifikasikan foto vs video per link. Tiap link = satu item carousel;
+/// label dinomori agar tidak kembar di pemilih kualitas.
+List<MediaQuality> _parseIndownItems(String html) {
+  final qualities = <MediaQuality>[];
+  final seen = <String>{};
+
+  bool accept(String link) {
+    if (!link.startsWith('http') || !seen.add(link)) return false;
+    if (link.contains('indown.net/api') ||
+        link.contains('facebook.com') ||
+        link.contains('ads')) {
+      return false;
+    }
+    final lower = link.toLowerCase();
+    return lower.contains('rapidcdn.app') ||
+        lower.contains('snapcdn') ||
+        lower.contains('cdninstagram') ||
+        lower.contains('fbcdn') ||
+        lower.contains('.mp4') ||
+        lower.contains('.mov') ||
+        lower.contains('.jpg') ||
+        lower.contains('.jpeg') ||
+        lower.contains('.png') ||
+        lower.contains('.webp') ||
+        lower.contains('token=');
+  }
+
+  final links = <String>[];
+  for (final m in RegExp('href="([^"]+)"').allMatches(html)) {
+    final link = m.group(1)!.replaceAll('&amp;', '&');
+    if (accept(link)) links.add(link);
+  }
+  // Fallback: URL mentah tanpa <a> (JSON / JS).
+  if (links.isEmpty) {
+    for (final m in RegExp(r'https?://[^\s"<>\\]+').allMatches(html)) {
+      final link =
+          m.group(0)!.replaceAll(r'\/', '/').replaceAll('&amp;', '&');
+      if (accept(link)) links.add(link);
+    }
+  }
+
+  for (var i = 0; i < links.length; i++) {
+    final photo = _isPhotoUrl(links[i]);
+    qualities.add(MediaQuality(
+      label: photo
+          ? _numbered('Foto HD', i + 1, links.length)
+          : _numbered('Video HD', i + 1, links.length),
+      itag: links[i],
+      extension: photo ? _guessExtension(links[i]) : 'mp4',
+      hasAudio: photo ? null : true,
+    ));
+  }
+
+  // Tambahkan opsi Audio MP3 jika konten memiliki video / reel
+  final videoQualities =
+      qualities.where((q) => q.extension == 'mp4' || (q.hasAudio ?? false)).toList();
+  if (videoQualities.isNotEmpty) {
+    if (videoQualities.length == 1) {
+      qualities.add(MediaQuality(
+        label: 'Audio MP3',
+        itag: videoQualities.first.itag,
+        extension: 'mp3',
+        hasAudio: true,
+      ));
+    } else {
+      for (var i = 0; i < videoQualities.length; i++) {
+        qualities.add(MediaQuality(
+          label: 'Audio MP3 (${i + 1})',
+          itag: videoQualities[i].itag,
+          extension: 'mp3',
+          hasAudio: true,
+        ));
+      }
+    }
+  }
+
+  return qualities;
+}
+
+/// Thumbnail item pertama: img kotak pertama, fallback URL foto itu sendiri.
+String? _firstThumbnail(String html, List<MediaQuality> qualities) {
+  final img = RegExp('<img[^>]+src="([^"]+)"').firstMatch(html)?.group(1);
+  if (img != null && img.startsWith('http')) return img;
+  for (final q in qualities) {
+    if (q.extension != 'mp4') return q.itag;
+  }
+  return null;
 }
 
 class InstagramFallbackProvider implements MediaProvider {
@@ -358,6 +484,28 @@ class InstagramFallbackProvider implements MediaProvider {
         message: 'snapsave: tidak ada link ditemukan.',
         kind: ProviderErrorKind.noResult,
       );
+    }
+
+    final videoQualities =
+        qualities.where((q) => q.extension == 'mp4' || (q.hasAudio ?? false)).toList();
+    if (videoQualities.isNotEmpty) {
+      if (videoQualities.length == 1) {
+        qualities.add(MediaQuality(
+          label: 'Audio MP3',
+          itag: videoQualities.first.itag,
+          extension: 'mp3',
+          hasAudio: true,
+        ));
+      } else {
+        for (var i = 0; i < videoQualities.length; i++) {
+          qualities.add(MediaQuality(
+            label: 'Audio MP3 (${i + 1})',
+            itag: videoQualities[i].itag,
+            extension: 'mp3',
+            hasAudio: true,
+          ));
+        }
+      }
     }
 
     final hasVideo = qualities.any((q) => q.extension == 'mp4');

@@ -46,3 +46,16 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Environment files
+.env
+.env.*
+*.env
+backend/.env
+
+# IDE and AI agent caches
+.gemini/
+.codex/
+.cursor/
+.impeccable/
+test_yt*.dart

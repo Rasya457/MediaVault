@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediavault/features/home/home_page.dart';
 import 'package:mediavault/features/home/platform_item.dart';
@@ -6,37 +6,36 @@ import 'package:mediavault/features/home/widgets/liquid_glass_nav_bar.dart';
 import 'package:mediavault/features/shell/app_shell.dart';
 
 void main() {
-  testWidgets('AppShell renders Home, Download FAB, and LiquidGlassNavBar', (tester) async {
+  testWidgets('AppShell renders Home and LiquidGlassNavBar', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(home: AppShell()),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('MORI'), findsOneWidget);
-    expect(find.text('Paste link here...'), findsOneWidget);
+    expect(find.text('Tempel link di sini...'), findsOneWidget);
     expect(find.byIcon(Icons.search), findsOneWidget);
     expect(find.byIcon(Icons.format_list_bulleted), findsOneWidget);
     expect(find.byIcon(Icons.content_paste), findsOneWidget);
-    expect(find.text('ANALYZE'), findsOneWidget);
-    expect(find.text('SUPPORTED PLATFORMS'), findsOneWidget);
+    expect(find.text('ANALISIS'), findsOneWidget);
+    expect(find.text('PLATFORM DIDUKUNG'), findsOneWidget);
     expect(find.text('TIKTOK'), findsOneWidget);
     expect(find.text('INSTAGRAM'), findsOneWidget);
     expect(find.text('YOUTUBE'), findsOneWidget);
     expect(find.text('SPOTIFY'), findsOneWidget);
-    expect(find.byIcon(Icons.cloud_download_outlined), findsOneWidget);
-    expect(find.text('HOME'), findsOneWidget);
-    expect(find.text('HISTORY'), findsOneWidget);
-    expect(find.text('SETTINGS'), findsOneWidget);
+    expect(find.text('Beranda'), findsOneWidget);
+    expect(find.text('Riwayat'), findsOneWidget);
+    expect(find.text('Pengaturan'), findsOneWidget);
   });
 
-  testWidgets('ANALYZE dengan URL tidak valid tampilkan SnackBar', (tester) async {
+  testWidgets('ANALISIS dengan URL tidak valid tampilkan SnackBar', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(home: Scaffold(body: HomePage())),
     );
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), 'bukan-url-valid');
-    await tester.tap(find.text('ANALYZE'));
+    await tester.tap(find.text('ANALISIS'));
     await tester.pump();
 
     expect(
@@ -45,13 +44,13 @@ void main() {
     );
   });
 
-  testWidgets('ANALYZE dengan URL kosong tidak melakukan apa-apa', (tester) async {
+  testWidgets('ANALISIS dengan URL kosong tidak melakukan apa-apa', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(home: Scaffold(body: HomePage())),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('ANALYZE'));
+    await tester.tap(find.text('ANALISIS'));
     await tester.pump();
 
     expect(find.byType(CircularProgressIndicator), findsNothing);

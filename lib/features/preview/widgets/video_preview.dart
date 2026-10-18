@@ -11,6 +11,9 @@ import 'preview_frame.dart';
 /// Otomatis diputar begitu siap, dan diulang dari awal (loop) saat selesai.
 /// Thumbnail ditampilkan sebagai poster sampai frame video pertama jalan,
 /// jadi tidak ada layar hitam di antara loading dan pemutaran.
+///
+/// Kontrol memakai konstanta [MoriVideoScene] — dunia menonton selalu gelap
+/// dengan bar frosted putih, tidak mengikuti tema aplikasi.
 class VideoPreview extends StatefulWidget {
   const VideoPreview({
     super.key,
@@ -115,10 +118,17 @@ class _VideoPreviewState extends State<VideoPreview> {
           child: _failed
               ? const Icon(
                   Icons.broken_image_outlined,
-                  color: MoriColors.ink,
+                  color: Color(0xFFFFFFFF),
                   size: 48,
                 )
-              : const CircularProgressIndicator(color: MoriColors.ink),
+              : const SizedBox(
+                  width: 30,
+                  height: 30,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: Color(0xFFFFFFFF),
+                  ),
+                ),
         ),
       );
     }
@@ -189,10 +199,22 @@ class _PlayerBody extends StatelessWidget {
             right: 8,
             bottom: 8,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: MoriColors.ink.withValues(alpha: 0.7),
-                borderRadius: BorderRadius.circular(12),
+                // Bar frosted putih di atas video (adegan menonton, bukan tema).
+                color: MoriVideoScene.barFill,
+                border: Border.all(
+                  color: MoriVideoScene.barBorder,
+                  width: 1,
+                ),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x14000000),
+                    offset: Offset(0, 2),
+                    blurRadius: 8,
+                  ),
+                ],
               ),
               // Ikon mengikuti state player (play/pause/mute) secara langsung,
               // termasuk saat video loop dari awal.
@@ -205,11 +227,11 @@ class _PlayerBody extends StatelessWidget {
                         onTap: _togglePlay,
                         child: Icon(
                           value.isPlaying ? Icons.pause : Icons.play_arrow,
-                          color: Colors.white,
+                          color: MoriVideoScene.played,
                           size: 26,
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 8),
                       GestureDetector(
                         onTap: () =>
                             controller.setVolume(value.volume > 0 ? 0.0 : 1.0),
@@ -217,28 +239,28 @@ class _PlayerBody extends StatelessWidget {
                           value.volume > 0
                               ? Icons.volume_up
                               : Icons.volume_off,
-                          color: Colors.white,
+                          color: MoriVideoScene.played,
                           size: 22,
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: VideoProgressIndicator(
                           controller,
                           allowScrubbing: true,
                           colors: const VideoProgressColors(
-                            playedColor: Colors.white,
-                            bufferedColor: Colors.white38,
-                            backgroundColor: Colors.white24,
+                            playedColor: MoriVideoScene.played,
+                            bufferedColor: MoriVideoScene.buffered,
+                            backgroundColor: MoriVideoScene.track,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 8),
                       GestureDetector(
                         onTap: onFullscreen,
                         child: const Icon(
                           Icons.fullscreen,
-                          color: Colors.white,
+                          color: MoriVideoScene.played,
                           size: 26,
                         ),
                       ),

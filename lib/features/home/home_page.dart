@@ -1,5 +1,3 @@
-﻿import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/theme/design_tokens.dart';
@@ -22,17 +20,96 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _controller = TextEditingController();
-  final _focusNode  = FocusNode();
-  bool _multiLine   = false;
-  bool _loading     = false;
+  final _focusNode = FocusNode();
+  bool _multiLine = false;
+  bool _loading = false;
+  String? _lastCheckedClipboard;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkClipboardAuto());
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      _checkClipboardAuto();
+    }
+  }
+
+  /// Auto-check clipboard saat app dibuka atau resumed.
+  Future<void> _checkClipboardAuto() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+
+    // Skip jika kosong, sama dengan yang terakhir dicek, atau sudah ada di field
+    if (text.isEmpty || text == _lastCheckedClipboard || text == _controller.text) {
+      return;
+    }
+
+    _lastCheckedClipboard = text;
+
+    // Cek apakah ini URL yang valid
+    final uri = Uri.tryParse(text);
+    final isValidUrl = uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.host.isNotEmpty;
+
+    if (!isValidUrl) return;
+
+    // Cek apakah platform supported
+    final platform = detectPlatform(text);
+    if (platform == null) return;
+
+    // Tanya user apakah mau paste
+    if (!mounted) return;
+
+    final scheme = MoriScheme.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.link, color: Color(0xFFFFFFFF), size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Tautan dari clipboard terdeteksi',
+                style: TextStyle(
+                  fontFamily: 'Geist',
+                  color: scheme.onInverseSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: scheme.inverseSurface,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 90),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'TEMPEL',
+          textColor: scheme.onInverseSurface,
+          onPressed: () {
+            _controller.text = text;
+            _controller.selection = TextSelection.collapsed(offset: text.length);
+          },
+        ),
+      ),
+    );
   }
 
   /// Membaca clipboard dan menaruh cursor di akhir teks.
@@ -99,28 +176,32 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showErrorSnackBar(String message) {
+    final scheme = MoriScheme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           message,
-          style: const TextStyle(
-            color: MoriColors.surface,
+          style: TextStyle(
+            fontFamily: 'Geist',
+            color: Colors.white,
             fontWeight: FontWeight.w600,
           ),
         ),
-        backgroundColor: MoriColors.ink,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+        // Error pakai Brick Signal (warna semantik gagal), bukan pill netral.
+        backgroundColor: scheme.error,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(MoriRadius.button),
+        ),
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(16),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 90),
         duration: const Duration(seconds: 4),
       ),
     );
   }
 
-  String? get _fontFamily => (!kIsWeb && Platform.isIOS) ? null : 'Inter';
-
   @override
   Widget build(BuildContext context) {
+    final scheme = MoriScheme.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () => FocusScope.of(context).unfocus(),
@@ -138,15 +219,15 @@ class _HomePageState extends State<HomePage> {
             ),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                _buildTitle(),
+                _buildTitle(scheme),
                 const SizedBox(height: MoriSpacing.afterTitle),
-                _buildLinkField(),
+                _buildLinkField(scheme),
                 const SizedBox(height: MoriSpacing.afterField),
-                _buildAnalyzeButton(),
+                _buildAnalyzeButton(scheme),
                 const SizedBox(height: MoriSpacing.afterBtn),
-                _buildSectionLabel(),
+                _buildSectionLabel(scheme),
                 const SizedBox(height: MoriSpacing.afterLabel),
-                _buildPlatformGrid(),
+                _buildPlatformGrid(scheme),
               ]),
             ),
           ),
@@ -155,22 +236,38 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildTitle() {
-    return Text(
-      'MORI',
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        fontFamily: _fontFamily,
-        fontSize: MoriText.titleSize,
-        fontWeight: FontWeight.w800,
-        letterSpacing: MoriText.titleLetterSpacing,
-        color: MoriColors.ink,
-        height: 1.0,
-      ),
+  Widget _buildTitle(MoriScheme scheme) {
+    return Column(
+      children: [
+        Text(
+          'MORI',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontFamily: 'Geist',
+            fontSize: MoriText.titleSize,
+            fontWeight: FontWeight.w800,
+            letterSpacing: MoriText.titleLetterSpacing,
+            color: scheme.ink,
+            height: 1.0,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Unduh media dari semua platform',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontFamily: 'Geist',
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: scheme.secondary,
+            letterSpacing: 0.1,
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildLinkField() {
+  Widget _buildLinkField(MoriScheme scheme) {
     return SizedBox(
       height: _multiLine ? null : 50,
       child: TextField(
@@ -182,25 +279,25 @@ class _HomePageState extends State<HomePage> {
         onSubmitted: (_) => _analyze(),
         enabled: !_loading,
         style: TextStyle(
-          fontFamily: _fontFamily,
+          fontFamily: 'Geist',
           fontSize: MoriText.fieldSize,
-          color: MoriColors.ink,
+          color: scheme.ink,
         ),
         decoration: InputDecoration(
           isDense: true,
-          hintText: 'Paste link here...',
+          hintText: 'Tempel link di sini...',
           hintStyle: TextStyle(
-            fontFamily: _fontFamily,
+            fontFamily: 'Geist',
             fontSize: MoriText.fieldSize,
-            color: MoriColors.hint,
+            color: scheme.secondary,
           ),
           filled: true,
-          fillColor: MoriColors.surface,
+          fillColor: scheme.surface,
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          prefixIcon: const Padding(
-            padding: EdgeInsets.only(left: 14, right: 10),
-            child: Icon(Icons.search, color: MoriColors.ink, size: 24),
+          prefixIcon: Padding(
+            padding: const EdgeInsets.only(left: 14, right: 10),
+            child: Icon(Icons.search, color: scheme.secondary, size: 24),
           ),
           prefixIconConstraints:
               const BoxConstraints(minWidth: 48, minHeight: 48),
@@ -210,13 +307,13 @@ class _HomePageState extends State<HomePage> {
               IconButton(
                 icon: Icon(
                   Icons.format_list_bulleted,
-                  color: _multiLine ? MoriColors.surface : MoriColors.ink,
+                  color: _multiLine ? scheme.onAccent : scheme.secondary,
                   size: 24,
                 ),
-                tooltip: 'Toggle multi-link',
+                tooltip: 'Mode banyak link',
                 style: _multiLine
                     ? IconButton.styleFrom(
-                        backgroundColor: MoriColors.ink,
+                        backgroundColor: scheme.accentFill,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(6),
                         ),
@@ -226,9 +323,8 @@ class _HomePageState extends State<HomePage> {
                     _loading ? null : () => setState(() => _multiLine = !_multiLine),
               ),
               IconButton(
-                icon:
-                    const Icon(Icons.content_paste, color: MoriColors.ink, size: 24),
-                tooltip: 'Paste from clipboard',
+                icon: Icon(Icons.content_paste, color: scheme.secondary, size: 24),
+                tooltip: 'Tempel dari clipboard',
                 onPressed: _loading ? null : _paste,
               ),
               const SizedBox(width: 4),
@@ -236,60 +332,62 @@ class _HomePageState extends State<HomePage> {
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(MoriRadius.field),
-            borderSide:
-                const BorderSide(color: MoriColors.ink, width: MoriBorder.field),
+            borderSide: BorderSide(
+              color: scheme.hairline,
+              width: MoriBorder.field,
+            ),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(MoriRadius.field),
-            borderSide:
-                const BorderSide(color: MoriColors.ink, width: MoriBorder.field),
+            borderSide: BorderSide(
+              color: scheme.hairline,
+              width: MoriBorder.field,
+            ),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(MoriRadius.field),
-            borderSide: const BorderSide(
-                color: MoriColors.activeBorder, width: MoriBorder.field),
+            borderSide: BorderSide(
+              color: scheme.accent,
+              width: MoriBorder.selected,
+            ),
           ),
           disabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(MoriRadius.field),
             borderSide: BorderSide(
-                color: MoriColors.ink.withAlpha(100), width: MoriBorder.field),
+              color: scheme.hairline.withValues(alpha: 0.6),
+              width: MoriBorder.field,
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildAnalyzeButton() {
-    return SizedBox(
+  Widget _buildAnalyzeButton(MoriScheme scheme) {
+    return Container(
       width: double.infinity,
       height: 50,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(MoriRadius.button),
+        boxShadow: _loading ? null : MoriShadow.button,
+      ),
       child: FilledButton(
         onPressed: _loading ? null : _analyze,
-        style: FilledButton.styleFrom(
-          backgroundColor: MoriColors.ink,
-          foregroundColor: Colors.white,
-          disabledBackgroundColor: MoriColors.hint,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(MoriRadius.button),
-          ),
-          elevation: 0,
-          shadowColor: Colors.transparent,
-        ),
         child: _loading
-            ? const SizedBox(
+            ? SizedBox(
                 width: 22,
                 height: 22,
                 child: CircularProgressIndicator(
                   strokeWidth: 2.5,
-                  color: Colors.white,
+                  color: scheme.onAccent,
                 ),
               )
             : Text(
-                'ANALYZE',
+                'ANALISIS',
                 style: TextStyle(
-                  fontFamily: _fontFamily,
+                  fontFamily: 'Geist',
                   fontSize: MoriText.btnSize,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: MoriText.btnLetterSpacing,
                 ),
               ),
@@ -297,21 +395,21 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildSectionLabel() {
+  Widget _buildSectionLabel(MoriScheme scheme) {
     return Text(
-      'SUPPORTED PLATFORMS',
+      'PLATFORM DIDUKUNG',
       textAlign: TextAlign.center,
       style: TextStyle(
-        fontFamily: _fontFamily,
+        fontFamily: 'Geist',
         fontSize: MoriText.labelSize,
         fontWeight: FontWeight.w700,
         letterSpacing: MoriText.labelLetterSpacing,
-        color: MoriColors.label,
+        color: scheme.secondary,
       ),
     );
   }
 
-  Widget _buildPlatformGrid() {
+  Widget _buildPlatformGrid(MoriScheme scheme) {
     final rows = <Widget>[];
     for (var i = 0; i < kPlatforms.length; i += 2) {
       final a = kPlatforms[i];
@@ -320,11 +418,16 @@ class _HomePageState extends State<HomePage> {
         IntrinsicHeight(
           child: Row(
             children: [
-              Expanded(child: _PlatformTile(platform: a, fontFamily: _fontFamily)),
+              Expanded(
+                child: _PlatformTile(
+                  platform: a,
+                  scheme: scheme,
+                ),
+              ),
               const SizedBox(width: MoriSpacing.gridGap),
               Expanded(
                 child: b != null
-                    ? _PlatformTile(platform: b, fontFamily: _fontFamily)
+                    ? _PlatformTile(platform: b, scheme: scheme)
                     : const SizedBox(),
               ),
             ],
@@ -340,9 +443,9 @@ class _HomePageState extends State<HomePage> {
 }
 
 class _PlatformTile extends StatefulWidget {
-  const _PlatformTile({required this.platform, this.fontFamily});
+  const _PlatformTile({required this.platform, required this.scheme});
   final PlatformItem platform;
-  final String? fontFamily;
+  final MoriScheme scheme;
 
   @override
   State<_PlatformTile> createState() => _PlatformTileState();
@@ -353,41 +456,56 @@ class _PlatformTileState extends State<_PlatformTile> {
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = _pressed ? MoriColors.ink : MoriColors.surface;
-    final fgColor = _pressed ? MoriColors.surface : MoriColors.ink;
+    final scheme = widget.scheme;
+    final bgColor =
+        _pressed ? scheme.accentTint : scheme.surface;
+    final borderColor = _pressed ? scheme.accent : scheme.hairline;
 
     return GestureDetector(
-      onTapDown:   (_) => setState(() => _pressed = true),
-      onTapUp:     (_) => setState(() => _pressed = false),
-      onTapCancel: ()  => setState(() => _pressed = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 80),
-        height: MoriSpacing.tileHeight,
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: bgColor,
-          border: Border.all(color: MoriColors.ink, width: MoriBorder.tile),
-          borderRadius: BorderRadius.circular(MoriRadius.tile),
-        ),
-        child: Row(
-          children: [
-            const SizedBox(width: 16),
-            widget.platform.iconBuilder(fgColor),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                widget.platform.label,
-                style: TextStyle(
-                  fontFamily: widget.fontFamily,
-                  fontSize: MoriText.tileSize,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: MoriText.tileLetterSpacing,
-                  color: fgColor,
-                ),
-                overflow: TextOverflow.ellipsis,
+      onTapDown: (_) {
+        HapticFeedback.lightImpact();
+        setState(() => _pressed = true);
+      },
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.97 : 1.0,
+        duration: const Duration(milliseconds: 100),
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          height: MoriSpacing.tileHeight,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: bgColor,
+            border: Border.all(color: borderColor, width: MoriBorder.tile),
+            borderRadius: BorderRadius.circular(MoriRadius.tile),
+            boxShadow: MoriShadow.soft,
+          ),
+          child: Row(
+            children: [
+              const SizedBox(width: 16),
+              // Ikon brand: warna asli platform (identifier, bukan dekorasi).
+              widget.platform.iconBuilder(
+                widget.platform.brand(scheme.brightness),
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  widget.platform.label,
+                  style: TextStyle(
+                    fontFamily: 'Geist',
+                    fontSize: MoriText.tileSize,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: MoriText.tileLetterSpacing,
+                    color: scheme.ink,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

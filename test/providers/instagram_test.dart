@@ -1,4 +1,4 @@
-﻿import 'package:dio/dio.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediavault/core/network/api_client.dart' as client_lib;
 import 'package:mediavault/services/providers/instagram_provider.dart';
@@ -7,8 +7,6 @@ import 'package:mediavault/services/providers/remote_config.dart';
 import '../helpers/mock_remote_config.dart';
 import '../helpers/mock_dio.dart';
 
-const _tokenPage =
-    '<html><form><input type="hidden" name="_token" value="TOK123"></form></html>';
 const _resultPage =
     '<html><a href="https://d4.indown.io/fetch?url=abc">Download</a>'
     '<a href="https://cdninstagram.com/v.mp4">Direct</a></html>';
@@ -28,7 +26,7 @@ class _CaptureAdapter implements HttpClientAdapter {
   ) async {
     onRequest(options);
     final body =
-        options.method.toUpperCase() == 'POST' ? _resultPage : _tokenPage;
+        options.method.toUpperCase() == 'POST' ? _resultPage : '<html></html>';
     return ResponseBody.fromString(body, 200, headers: {
       'content-type': ['application/json'],
     });
@@ -73,24 +71,37 @@ void main() {
     });
   });
 
-  group('InstagramPrimaryProvider fetchInfo (flow 2 langkah terverifikasi E2E)',
-      () {
-    test('token + POST -> link fetch didahulukan', () async {
-      setupMockDio(getPlain: _tokenPage, postPlain: _resultPage);
+  group('InstagramPrimaryProvider fetchInfo (indown.net ajaxSearch)', () {
+    const html = '<div class="download-items">'
+        '<div class="download-items__thumb">'
+        '<img src="https://cdninstagram.com/thumb.jpg"></div>'
+        '<a class="abutton" href="https://rapidcdn.app/v2?token=abc">Download</a>'
+        '</div>'
+        '<div class="download-items">'
+        '<img src="https://cdninstagram.com/p2.jpg">'
+        '<a class="abutton" href="https://cdninstagram.com/p2.jpg">HD</a>'
+        '</div>';
+
+    test('POST ajaxSearch -> item video + foto', () async {
+      setupMockDio(postResponseData: {
+        'data': html,
+      });
       final info = await InstagramPrimaryProvider().fetchInfo(
-        'https://www.instagram.com/p/ABC123/',
+        'https://www.instagram.com/reel/ABC123/',
       );
-      expect(info.qualities.length, equals(2));
-      expect(info.qualities.first.itag, contains('indown.io/fetch'));
-      expect(info.qualities.first.label, equals('Video HD'));
+      expect(info.qualities.length, equals(3));
+      expect(info.title, contains('Reel'));
+      expect(info.title, contains('ABC123'));
+      expect(info.thumbnail, contains('thumb.jpg'));
+      expect(info.qualities.first.extension, equals('mp4'));
+      expect(info.qualities.first.label, equals('Video HD 1'));
+      expect(info.qualities[1].label, equals('Foto HD 2'));
+      expect(info.qualities.any((q) => q.label == 'Audio MP3'), isTrue);
       expect(info.source, equals('third-party'));
     });
 
-    test('tanpa token -> providerDown', () async {
-      setupMockDio(
-        getPlain: '<html>tanpa token</html>',
-        postPlain: _resultPage,
-      );
+    test('respons tanpa data -> noResult', () async {
+      setupMockDio(postResponseData: {'message': 'not found'});
       expect(
         () => InstagramPrimaryProvider().fetchInfo(
           'https://www.instagram.com/p/ABC123/',
@@ -99,7 +110,7 @@ void main() {
           isA<ProviderException>().having(
             (e) => e.kind,
             'kind',
-            ProviderErrorKind.providerDown,
+            ProviderErrorKind.noResult,
           ),
         ),
       );
@@ -107,8 +118,9 @@ void main() {
 
     test('tanpa link hasil -> noResult', () async {
       setupMockDio(
-        getPlain: _tokenPage,
-        postPlain: '<html>kosong</html>',
+        postResponseData: {
+          'data': '<html>kosong</html>',
+        },
       );
       expect(
         () => InstagramPrimaryProvider().fetchInfo(
@@ -124,77 +136,23 @@ void main() {
       );
     });
 
-    test('href kutip-satu ikut terambil', () async {
-      setupMockDio(
-        getPlain: _tokenPage,
-        postPlain:
-            "<html><a href='https://d4.indown.io/fetch?url=abc'>DL</a></html>",
-      );
-      final info = await InstagramPrimaryProvider().fetchInfo(
-        'https://www.instagram.com/p/ABC123/',
-      );
-      expect(info.qualities.length, equals(1));
-      expect(info.qualities.first.itag, contains('indown.io/fetch'));
-    });
-
-    test('atribut data-url ikut terambil', () async {
-      setupMockDio(
-        getPlain: _tokenPage,
-        postPlain:
-            '<html><button data-url="https://d7.indown.io/fetch?url=xyz">DL</button></html>',
-      );
-      final info = await InstagramPrimaryProvider().fetchInfo(
-        'https://www.instagram.com/p/ABC123/',
-      );
-      expect(info.qualities.length, equals(1));
-      expect(info.qualities.first.itag, contains('indown.io/fetch'));
-    });
-
-    test('contentUrl JSON-LD ikut terambil', () async {
-      setupMockDio(
-        getPlain: _tokenPage,
-        postPlain:
-            '<html><script type="application/ld+json">{"contentUrl":"https://cdninstagram.com/x.mp4"}</script></html>',
-      );
-      final info = await InstagramPrimaryProvider().fetchInfo(
-        'https://www.instagram.com/p/ABC123/',
-      );
-      expect(info.qualities.length, equals(1));
-      expect(info.qualities.first.itag, contains('.mp4'));
-    });
-
-    test('pesan error memuat judul halaman', () async {
-      setupMockDio(
-        getPlain: _tokenPage,
-        postPlain:
-            '<html><head><title>InDown - Error</title></head><body>oops</body></html>',
-      );
-      expect(
-        () => InstagramPrimaryProvider().fetchInfo(
-          'https://www.instagram.com/p/ABC123/',
-        ),
-        throwsA(
-          isA<ProviderException>().having(
-            (e) => e.message,
-            'message',
-            contains('InDown - Error'),
-          ),
-        ),
-      );
-    });
-
     test('POST memakai URL kanonis tanpa tracking param', () async {
-      String? postedLink;
+      String? postedQ;
       client_lib.httpClient.httpClientAdapter = _CaptureAdapter((options) {
         final data = options.data;
         if (options.method.toUpperCase() == 'POST' && data is Map) {
-          postedLink = data['link']?.toString();
+          postedQ = data['q']?.toString();
         }
       });
-      await InstagramPrimaryProvider().fetchInfo(
-        'https://www.instagram.com/reel/DeJaIPygloL/?utm_source=ig_web_copy_link&exln=NTc4MTIwNjQ2YQ==',
-      );
-      expect(postedLink,
+      // _CaptureAdapter menjawab token-page lama untuk GET dan _resultPage
+      // untuk POST; primary baru mem-POST JSON ajaxSearch sehingga respons
+      // tidak berbentuk {data: html} -> lempar noResult (diabaikan).
+      try {
+        await InstagramPrimaryProvider().fetchInfo(
+          'https://www.instagram.com/reel/DeJaIPygloL/?utm_source=ig_web_copy_link&exln=NTc4MTIwNjQ2YQ==',
+        );
+      } catch (_) {}
+      expect(postedQ,
           equals('https://www.instagram.com/reel/DeJaIPygloL/'));
     });
   });

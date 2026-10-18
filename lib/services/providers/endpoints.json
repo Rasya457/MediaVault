@@ -1,4 +1,4 @@
-﻿{
+{
   "version": 1,
   "providers": {
     "tiktok_primary": {
@@ -11,9 +11,14 @@
       "method": "GET",
       "enabled": true
     },
+    "tiktok_tertiary": {
+      "url": "https://snaptik.app/abc2.php",
+      "method": "POST",
+      "enabled": true
+    },
     "instagram_primary": {
-      "url": "https://indown.io/en5",
-      "method": "GET",
+      "url": "https://indown.net/api/ajaxSearch",
+      "method": "POST",
       "enabled": true
     },
     "instagram_fallback": {
@@ -22,14 +27,14 @@
       "enabled": true
     },
     "youtube_primary": {
-      "url": "https://ytmp3.gg/api/json",
-      "method": "GET",
-      "enabled": false
+      "url": "https://hub.convert1s.com/api/download",
+      "method": "POST",
+      "enabled": true
     },
     "youtube_fallback": {
-      "url": "https://yt1s.com/api/ajaxConvert",
-      "method": "POST",
-      "enabled": false
+      "url": "https://a.ymcdn.org/api/v1/init",
+      "method": "GET",
+      "enabled": true
     },
     "youtube_innertube": {
       "url": "https://www.youtube.com/youtubei/v1/player",
@@ -37,14 +42,14 @@
       "enabled": true
     },
     "spotify_primary": {
-      "url": "https://spotidown.app/api",
+      "url": "https://spotimate.app",
       "method": "GET",
-      "enabled": false
+      "enabled": true
     },
     "spotify_fallback": {
-      "url": "https://spotifydown.com/api/download",
+      "url": "https://spotidown.app",
       "method": "GET",
-      "enabled": false
+      "enabled": true
     }
   }
 }

@@ -1,4 +1,4 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:mediavault/services/providers/tiktok_provider.dart';
 import 'package:mediavault/services/providers/provider.dart';
 import 'package:mediavault/services/providers/remote_config.dart';
@@ -98,7 +98,8 @@ void main() {
         'https://www.tiktok.com/@user/video/123',
       );
       expect(info.qualities.first.itag, contains('snapcdn'));
-      expect(info.qualities.length, equals(2));
+      expect(info.qualities.length, equals(3));
+      expect(info.qualities.any((q) => q.label == 'Audio MP3'), isTrue);
     });
 
     test('lempar ProviderException jika status bukan ok', () async {
@@ -133,7 +134,8 @@ void main() {
       expect(info.title, equals('Viral Dance'));
       expect(info.author, equals('UserXYZ'));
       expect(info.durationSec, equals(22));
-      expect(info.qualities.length, equals(2));
+      expect(info.qualities.length, equals(3));
+      expect(info.qualities.any((q) => q.label == 'Audio MP3'), isTrue);
       expect(info.providerName, equals('TikWm'));
     });
   });

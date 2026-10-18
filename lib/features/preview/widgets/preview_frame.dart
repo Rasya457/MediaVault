@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/design_tokens.dart';
 
-/// Bingkai bergaya neo-brutalist yang ukurannya mengikuti [aspectRatio]
-/// (lebar / tinggi). Landscape melebar penuh, portrait menyempit supaya tinggi
-/// tidak melebihi [maxHeight]. Karena kotaknya pas dengan isi, tidak ada
-/// area kosong atau background hitam di sekeliling konten.
+/// Bingkai pas rasio yang mengikuti [aspectRatio] (lebar / tinggi).
+/// Landscape melebar penuh, portrait menyempit supaya tinggi tidak melebihi
+/// [maxHeight]. Karena kotaknya pas dengan isi, tidak ada area kosong atau
+/// background hitam di sekeliling konten.
 class PreviewFrame extends StatelessWidget {
   const PreviewFrame({
     super.key,
@@ -20,6 +20,7 @@ class PreviewFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = MoriScheme.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         var w = constraints.maxWidth;
@@ -34,16 +35,14 @@ class PreviewFrame extends StatelessWidget {
             height: h,
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              color: MoriColors.surface,
-              border: Border.all(color: MoriColors.ink, width: 2),
-              borderRadius: BorderRadius.circular(MoriRadius.button),
-              boxShadow: const [
-                BoxShadow(
-                  color: MoriColors.ink,
-                  offset: Offset(3, 3),
-                  blurRadius: 0,
-                ),
-              ],
+              color: scheme.surface,
+              border: Border.all(
+                color: scheme.hairline,
+                width: MoriBorder.tile,
+              ),
+              borderRadius: BorderRadius.circular(MoriRadius.card),
+              // Bayangan tint ink dengan offset — bukan halo berwarna.
+              boxShadow: MoriShadow.product,
             ),
             child: child,
           ),
@@ -145,6 +144,7 @@ class _AdaptiveImageState extends State<AdaptiveImage> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = MoriScheme.of(context);
     final ratio = _ratio;
 
     if (_failed || ratio == null) {
@@ -156,21 +156,21 @@ class _AdaptiveImageState extends State<AdaptiveImage> {
           children: [
             if (_failed)
               widget.overlay ??
-                  const Center(
+                  Center(
                     child: Icon(
                       Icons.image_outlined,
-                      color: MoriColors.ink,
+                      color: scheme.faint,
                       size: 48,
                     ),
                   )
             else
-              const Center(
+              Center(
                 child: SizedBox(
                   width: 28,
                   height: 28,
                   child: CircularProgressIndicator(
                     strokeWidth: 3,
-                    color: MoriColors.ink,
+                    color: scheme.accent,
                   ),
                 ),
               ),

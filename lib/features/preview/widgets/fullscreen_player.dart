@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
+import '../../../core/theme/design_tokens.dart';
 
 /// Fullscreen untuk controller yang sama (tidak mengambil alih dispose).
+/// Dunia menonton murni hitam: kontrol memakai konstanta [MoriVideoScene],
+/// bukan warna tema aplikasi.
 class FullscreenPlayer extends StatelessWidget {
   const FullscreenPlayer({super.key, required this.controller});
 
@@ -23,14 +27,32 @@ class FullscreenPlayer extends StatelessWidget {
             Positioned(
               top: 8,
               right: 8,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.fullscreen_exit,
-                  color: Colors.white,
-                  size: 30,
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  // Lingkaran frosted putih gaya Apple di atas video
+                  color: MoriVideoScene.fullscreenFill,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: MoriVideoScene.fullscreenBorder,
+                    width: 1,
+                  ),
                 ),
-                tooltip: 'Keluar fullscreen',
-                onPressed: () => Navigator.of(context).pop(),
+                child: IconButton(
+                  icon: const Icon(
+                    Icons.fullscreen_exit,
+                    // Ikon putih: kontras penuh di dunia hitam
+                    color: MoriVideoScene.fullscreenIcon,
+                    size: 26,
+                  ),
+                  tooltip: 'Keluar fullscreen',
+                  onPressed: () {
+                    HapticFeedback.lightImpact();
+                    Navigator.of(context).pop();
+                  },
+                  padding: EdgeInsets.zero,
+                ),
               ),
             ),
             Positioned(
@@ -41,9 +63,10 @@ class FullscreenPlayer extends StatelessWidget {
                 controller,
                 allowScrubbing: true,
                 colors: const VideoProgressColors(
-                  playedColor: Colors.white,
-                  bufferedColor: Colors.white38,
-                  backgroundColor: Colors.white24,
+                  // Progress terang di atas hitam (aksen dark, bukan tema)
+                  playedColor: MoriVideoScene.fullscreenPlayed,
+                  bufferedColor: MoriVideoScene.fullscreenBuffered,
+                  backgroundColor: MoriVideoScene.fullscreenTrack,
                 ),
               ),
             ),

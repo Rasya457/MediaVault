@@ -1,14 +1,18 @@
 ﻿import 'package:flutter/widgets.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../../core/theme/design_tokens.dart';
 
-/// Satu platform yang didukung MORI.
+/// Satu platform yang didukung MORI, lengkap dengan warna brand-nya.
+/// Warna brand adalah identifier semantik pada ikon tile — bukan aksen UI.
 class PlatformItem {
   const PlatformItem({
     required this.id,
     required this.label,
     required this.iconBuilder,
     required this.domains,
+    required this.brandLight,
+    required this.brandDark,
   });
 
   final String id;
@@ -18,13 +22,19 @@ class PlatformItem {
   final Widget Function(Color color) iconBuilder;
 
   final List<String> domains;
+  final Color brandLight;
+  final Color brandDark;
+
+  /// Warna brand sesuai brightness tema saat ini.
+  Color brand(Brightness brightness) =>
+      brightness == Brightness.dark ? brandDark : brandLight;
 }
 
 /// Helper: FaIcon dari FaIconData.
 Widget _fa(FaIconData icon, Color color) =>
     FaIcon(icon, color: color, size: 24);
 
-/// Helper: SVG asset.
+/// Helper: SVG asset, warna mengikuti parameter (monokrom SVG di-tint).
 Widget _svg(String asset, Color color) => SvgPicture.asset(
       asset,
       colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
@@ -32,105 +42,135 @@ Widget _svg(String asset, Color color) => SvgPicture.asset(
       height: 24,
     );
 
-/// Daftar 16 platform lengkap — urutan persis sesuai screenshot:
-/// TikTok, Instagram, YouTube, Twitter, Spotify, Bilibili, Douyin, RedNote,
-/// Threads, Pinterest, Apple Music, Facebook, Bandcamp, Pixiv, Reddit, Terabox.
+/// Daftar 16 platform lengkap — ikon memakai warna brand asli masing-masing.
 final List<PlatformItem> kPlatforms = [
   PlatformItem(
     id: 'tiktok',
     label: 'TIKTOK',
     iconBuilder: (c) => _fa(FontAwesomeIcons.tiktok, c),
     domains: const ['tiktok.com', 'vt.tiktok.com'],
+    brandLight: MoriBrand.tiktok,
+    brandDark: MoriBrand.tiktokDark,
   ),
   PlatformItem(
     id: 'instagram',
     label: 'INSTAGRAM',
     iconBuilder: (c) => _fa(FontAwesomeIcons.instagram, c),
     domains: const ['instagram.com', 'instagr.am'],
+    brandLight: MoriBrand.instagram,
+    brandDark: MoriBrand.instagramDark,
   ),
   PlatformItem(
     id: 'youtube',
     label: 'YOUTUBE',
     iconBuilder: (c) => _fa(FontAwesomeIcons.youtube, c),
     domains: const ['youtube.com', 'youtu.be', 'm.youtube.com'],
+    brandLight: MoriBrand.youtube,
+    brandDark: MoriBrand.youtube,
   ),
   PlatformItem(
     id: 'twitter',
     label: 'TWITTER',
     iconBuilder: (c) => _fa(FontAwesomeIcons.xTwitter, c),
     domains: const ['twitter.com', 'x.com', 't.co'],
+    brandLight: MoriBrand.x,
+    brandDark: MoriBrand.xDark,
   ),
   PlatformItem(
     id: 'spotify',
     label: 'SPOTIFY',
     iconBuilder: (c) => _fa(FontAwesomeIcons.spotify, c),
     domains: const ['open.spotify.com', 'spotify.com'],
+    brandLight: MoriBrand.spotify,
+    brandDark: MoriBrand.spotifyDark,
   ),
   PlatformItem(
     id: 'bilibili',
     label: 'BILIBILI',
     iconBuilder: (c) => _fa(FontAwesomeIcons.bilibili, c),
     domains: const ['bilibili.com', 'b23.tv'],
+    brandLight: MoriBrand.bilibili,
+    brandDark: MoriBrand.bilibili,
   ),
   PlatformItem(
     id: 'douyin',
     label: 'DOUYIN',
     iconBuilder: (c) => _fa(FontAwesomeIcons.tiktok, c), // Douyin memakai ikon TikTok
     domains: const ['douyin.com', 'iesdouyin.com'],
+    brandLight: MoriBrand.douyin,
+    brandDark: MoriBrand.douyinDark,
   ),
   PlatformItem(
     id: 'rednote',
     label: 'REDNOTE',
     iconBuilder: (c) => _svg('assets/icons/rednote.svg', c),
     domains: const ['xiaohongshu.com', 'xhslink.com'],
+    brandLight: MoriBrand.rednote,
+    brandDark: MoriBrand.rednoteDark,
   ),
   PlatformItem(
     id: 'threads',
     label: 'THREADS',
     iconBuilder: (c) => _fa(FontAwesomeIcons.threads, c),
     domains: const ['threads.net'],
+    brandLight: MoriBrand.threads,
+    brandDark: MoriBrand.threadsDark,
   ),
   PlatformItem(
     id: 'pinterest',
     label: 'PINTEREST',
     iconBuilder: (c) => _fa(FontAwesomeIcons.pinterest, c),
     domains: const ['pinterest.com', 'pin.it'],
+    brandLight: MoriBrand.pinterest,
+    brandDark: MoriBrand.pinterestDark,
   ),
   PlatformItem(
     id: 'applemusic',
     label: 'APPLE MUSIC',
     iconBuilder: (c) => _fa(FontAwesomeIcons.apple, c),
     domains: const ['music.apple.com'],
+    brandLight: MoriBrand.appleMusic,
+    brandDark: MoriBrand.appleMusicDark,
   ),
   PlatformItem(
     id: 'facebook',
     label: 'FACEBOOK',
     iconBuilder: (c) => _fa(FontAwesomeIcons.facebook, c),
     domains: const ['facebook.com', 'fb.watch', 'fb.com'],
+    brandLight: MoriBrand.facebook,
+    brandDark: MoriBrand.facebookDark,
   ),
   PlatformItem(
     id: 'bandcamp',
     label: 'BANDCAMP',
     iconBuilder: (c) => _fa(FontAwesomeIcons.bandcamp, c),
     domains: const ['bandcamp.com'],
+    brandLight: MoriBrand.bandcamp,
+    brandDark: MoriBrand.bandcampDark,
   ),
   PlatformItem(
     id: 'pixiv',
     label: 'PIXIV',
     iconBuilder: (c) => _fa(FontAwesomeIcons.pixiv, c),
     domains: const ['pixiv.net'],
+    brandLight: MoriBrand.pixiv,
+    brandDark: MoriBrand.pixivDark,
   ),
   PlatformItem(
     id: 'reddit',
     label: 'REDDIT',
     iconBuilder: (c) => _fa(FontAwesomeIcons.reddit, c),
     domains: const ['reddit.com', 'redd.it'],
+    brandLight: MoriBrand.reddit,
+    brandDark: MoriBrand.redditDark,
   ),
   PlatformItem(
     id: 'terabox',
     label: 'TERABOX',
     iconBuilder: (c) => _svg('assets/icons/terabox.svg', c),
     domains: const ['terabox.com', 'terabox.app', '1024terabox.com'],
+    brandLight: MoriBrand.terabox,
+    brandDark: MoriBrand.teraboxDark,
   ),
 ];
 
