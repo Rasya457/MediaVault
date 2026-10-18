@@ -41,6 +41,7 @@ class DownloadController extends ChangeNotifier {
     MediaQuality? quality,
     Map<String, String>? headers,
     String? title,
+    String? author,
     String? platform,
     String? thumbnail,
   }) async {
@@ -58,9 +59,18 @@ class DownloadController extends ChangeNotifier {
       if (dlUrl.startsWith('spotify') ||
           (platform?.toLowerCase() == 'spotify' && dlUrl.contains('p.scdn.co'))) {
         try {
+          String trackTitle = title ?? '';
+          String trackArtist = author ?? '';
+          if (dlUrl.startsWith('spotify_track:')) {
+            final parts = dlUrl.split(':');
+            if (parts.length >= 3) {
+              trackTitle = parts[1];
+              trackArtist = parts.sublist(2).join(':');
+            }
+          }
           final resolved = await SpotifyProvider.resolveFullTrackAudio(
-            platform ?? '',
-            title ?? '',
+            trackArtist,
+            trackTitle,
           );
           if (resolved != null && resolved.isNotEmpty) {
             dlUrl = resolved;

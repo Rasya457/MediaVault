@@ -93,6 +93,7 @@ class _PreviewPageState extends State<PreviewPage> {
       quality: q,
       headers: widget.info.downloadHeaders,
       title: widget.info.title,
+      author: widget.info.author,
       platform: widget.info.providerName,
       thumbnail: widget.info.thumbnail,
     );

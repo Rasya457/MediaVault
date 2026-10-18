@@ -60,6 +60,7 @@ class _FakeController extends DownloadController {
     MediaQuality? quality,
     Map<String, String>? headers,
     String? title,
+    String? author,
     String? platform,
     String? thumbnail,
   }) async {
