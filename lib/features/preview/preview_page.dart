@@ -38,10 +38,27 @@ class _PreviewPageState extends State<PreviewPage> {
   bool _ownsBatch = false;
   int? _activePreviewTrackIndex;
 
-  /// Mode playlist/album: semua pilihan berupa MP3 dan lebih dari satu lagu.
+  /// Mode playlist/album Spotify: semua pilihan berupa MP3 dan lebih dari satu lagu.
   bool get _isPlaylist =>
       widget.info.qualities.length > 1 &&
       widget.info.qualities.every((q) => q.extension == 'mp3');
+
+  /// Mode album media (Instagram carousel/TikTok foto): ada lebih dari satu
+  /// item foto/video (bukan semua MP3). Satu item saja tetap tampil biasa.
+  bool get _isMediaAlbum {
+    final qs = widget.info.qualities;
+    if (qs.length <= 1) return false;
+    final mediaItems = qs.where((q) =>
+        q.extension == 'jpg' ||
+        q.extension == 'jpeg' ||
+        q.extension == 'png' ||
+        q.extension == 'webp' ||
+        q.extension == 'heic' ||
+        q.extension == 'mp4' ||
+        q.extension == 'mov');
+    // Minimal 2 foto/video = mode album.
+    return mediaItems.length >= 2;
+  }
 
   @override
   void initState() {
@@ -50,7 +67,9 @@ class _PreviewPageState extends State<PreviewPage> {
     _ownsController = widget.controller == null;
     _batch = widget.batchController ?? BatchDownloadController();
     _ownsBatch = widget.batchController == null;
-    _batch.prepare(_trackItems(widget.info));
+    _batch.prepare(
+      _isMediaAlbum ? _mediaAlbumItems(widget.info) : _trackItems(widget.info),
+    );
 
     // Utamakan format video yang memiliki audio agar saat halaman dibuka,
     // video langsung bersuara secara default.
@@ -133,9 +152,44 @@ class _PreviewPageState extends State<PreviewPage> {
         filename: '$name.mp3',
         title: title,
         artist: artist,
+        extension: 'mp3',
         headers: info.downloadHeaders,
         thumbnail: info.thumbnail,
         previewUrl: q.audioUrl ?? (q.itag.startsWith('http') ? q.itag : null),
+      ));
+    }
+    return items;
+  }
+
+  /// Ubah kualitas foto/video album menjadi antrian unduhan.
+  List<BatchItem> _mediaAlbumItems(MediaInfo info) {
+    final items = <BatchItem>[];
+    final albumQualities = info.qualities
+        .where((q) =>
+            q.extension == 'jpg' ||
+            q.extension == 'jpeg' ||
+            q.extension == 'png' ||
+            q.extension == 'webp' ||
+            q.extension == 'heic' ||
+            q.extension == 'mp4' ||
+            q.extension == 'mov')
+        .toList();
+    for (var i = 0; i < albumQualities.length; i++) {
+      final q = albumQualities[i];
+      final isPhoto = q.extension != 'mp4' && q.extension != 'mov';
+      final index = (i + 1).toString().padLeft(2, '0');
+      final title = isPhoto ? 'Foto $index' : 'Video $index';
+      final filename = '${_sanitize(info.title)}_$index.${q.extension}';
+      items.add(BatchItem(
+        url: q.itag,
+        filename: filename,
+        title: title,
+        artist: info.author,
+        extension: q.extension,
+        headers: info.downloadHeaders,
+        thumbnail: q.itag.contains('.jpg') || q.itag.contains('cdn')
+            ? q.itag
+            : info.thumbnail,
       ));
     }
     return items;
@@ -289,6 +343,11 @@ class _PreviewPageState extends State<PreviewPage> {
                     scheme,
                     '${info.qualities.where((q) => q.extension == 'mp3').length} LAGU',
                   ),
+                if (_isMediaAlbum)
+                  _Badge(
+                    scheme,
+                    '${_batch.items.length} ITEM',
+                  ),
                 if (info.author.isNotEmpty)
                   Text(
                     info.author,
@@ -314,6 +373,8 @@ class _PreviewPageState extends State<PreviewPage> {
             const SizedBox(height: 20),
             if (_isPlaylist)
               ..._playlistBody()
+            else if (_isMediaAlbum)
+              ..._albumBatchBody()
             else ...[
               Text(
                 'PILIH KUALITAS',
@@ -447,6 +508,78 @@ class _PreviewPageState extends State<PreviewPage> {
                     onDownload: _batch.running ? null : () => _downloadOne(items[i]),
                   ),
                 ),
+            ],
+          );
+        },
+      ),
+    ];
+  }
+
+  // ---------- Mode album foto/video (Instagram carousel, dll) ----------
+
+  List<Widget> _albumBatchBody() {
+    final scheme = MoriScheme.of(context);
+    return [
+      AnimatedBuilder(
+        animation: _batch,
+        builder: (context, _) {
+          final items = _batch.items;
+          final hasPhotos = items.any((i) => i.isImage);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _BatchSection(
+                batch: _batch,
+                onDownloadAll: _downloadAll,
+                label: hasPhotos ? 'UNDUH SEMUA FOTO/VIDEO' : 'UNDUH SEMUA',
+              ),
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '${hasPhotos ? 'FOTO & VIDEO' : 'MEDIA'} (${items.length})',
+                    style: TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: MoriText.labelLetterSpacing,
+                      color: scheme.secondary,
+                    ),
+                  ),
+                  Text(
+                    'Ketuk untuk unduh satu per satu',
+                    style: TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: scheme.faint,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 1,
+                ),
+                itemCount: items.length,
+                itemBuilder: (context, i) {
+                  return _AlbumItemCard(
+                    item: items[i],
+                    index: i + 1,
+                    onDownload: _batch.running
+                        ? null
+                        : () => _downloadOne(items[i]),
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
             ],
           );
         },
@@ -791,16 +924,18 @@ class _DownloadSection extends StatelessWidget {
   }
 }
 
-/// Aksi unduh mode playlist: UNDUH SEMUA, progress keseluruhan,
+/// Aksi unduh mode playlist/album: UNDUH SEMUA, progress keseluruhan,
 /// dan BATALKAN selama berjalan.
 class _BatchSection extends StatelessWidget {
   const _BatchSection({
     required this.batch,
     required this.onDownloadAll,
+    this.label,
   });
 
   final BatchDownloadController batch;
   final VoidCallback onDownloadAll;
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -884,9 +1019,8 @@ class _BatchSection extends StatelessWidget {
           ),
         ElevatedButton(
           onPressed: onDownloadAll,
-          // Warna dari elevatedButtonTheme (dark-aware).
           child: Text(
-            'UNDUH SEMUA ($total)',
+            label ?? 'UNDUH SEMUA ($total)',
             style: const TextStyle(
               fontFamily: 'Geist',
               fontSize: 15,
@@ -897,5 +1031,196 @@ class _BatchSection extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+/// Card item album foto/video: thumbnail foto + status download + tombol unduh.
+class _AlbumItemCard extends StatelessWidget {
+  const _AlbumItemCard({
+    required this.item,
+    required this.index,
+    this.onDownload,
+  });
+
+  final BatchItem item;
+  final int index;
+  final VoidCallback? onDownload;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = MoriScheme.of(context);
+    final isPhoto = item.isImage;
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(MoriRadius.card),
+        border: Border.all(
+          color: item.status == BatchItemStatus.done
+              ? scheme.success.withValues(alpha: 0.5)
+              : item.status == BatchItemStatus.failed
+                  ? scheme.error.withValues(alpha: 0.4)
+                  : scheme.hairline,
+          width: item.status == BatchItemStatus.done ||
+                  item.status == BatchItemStatus.failed
+              ? 1.5
+              : MoriBorder.tile,
+        ),
+        boxShadow: MoriShadow.product,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Thumbnail foto / ikon video
+          if (item.url.startsWith('http'))
+            Image.network(
+              item.url,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Center(
+                child: Icon(
+                  isPhoto ? Icons.image_outlined : Icons.movie_outlined,
+                  color: scheme.secondary,
+                  size: 40,
+                ),
+              ),
+            )
+          else
+            Center(
+              child: Icon(
+                isPhoto ? Icons.image_outlined : Icons.movie_outlined,
+                color: scheme.secondary,
+                size: 40,
+              ),
+            ),
+
+          // Overlay gradien bawah
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.65),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    isPhoto ? Icons.photo : Icons.videocam,
+                    color: Colors.white,
+                    size: 13,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    item.title,
+                    style: const TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Tombol unduh / status
+          Positioned(
+            top: 6,
+            right: 6,
+            child: _buildStatusBadge(scheme),
+          ),
+
+          // Tap to download
+          if (item.status == BatchItemStatus.queued ||
+              item.status == BatchItemStatus.failed)
+            Positioned.fill(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: onDownload,
+                  borderRadius: BorderRadius.circular(MoriRadius.card),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(MoriScheme scheme) {
+    switch (item.status) {
+      case BatchItemStatus.queued:
+        return GestureDetector(
+          onTap: onDownload,
+          child: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.arrow_downward_rounded,
+              color: Colors.white,
+              size: 16,
+            ),
+          ),
+        );
+      case BatchItemStatus.downloading:
+        return Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.55),
+            shape: BoxShape.circle,
+          ),
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              value: item.progress > 0 ? item.progress.clamp(0.0, 1.0) : null,
+              strokeWidth: 2.5,
+              color: Colors.white,
+              backgroundColor: Colors.white24,
+            ),
+          ),
+        );
+      case BatchItemStatus.done:
+        return Container(
+          padding: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            color: scheme.success.withValues(alpha: 0.9),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.check_rounded,
+            color: Colors.white,
+            size: 16,
+          ),
+        );
+      case BatchItemStatus.failed:
+        return GestureDetector(
+          onTap: onDownload,
+          child: Container(
+            padding: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              color: scheme.error.withValues(alpha: 0.85),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.refresh_rounded,
+              color: Colors.white,
+              size: 16,
+            ),
+          ),
+        );
+    }
   }
 }

@@ -86,22 +86,22 @@ class MoriScheme {
 
   static const light = MoriScheme(
     brightness: Brightness.light,
-    background: Color(0xFFF2F2F7),   // iOS system background
+    background: Color(0xFFF5F4F0),   // Morri paper — hangat, nyaris netral
     surface: Color(0xFFFFFFFF),
-    surfaceVariant: Color(0xFFE5E5EA),
-    ink: Color(0xFF1C1C1E),          // iOS label color
-    secondary: Color(0xFF8E8E93),    // iOS secondary label
-    faint: Color(0xFFC7C7CC),        // iOS placeholder text
-    hairline: Color(0xFFE5E5EA),
-    accent: Color(0xFF007AFF),       // Apple Blue
-    accentFill: Color(0xFF007AFF),
-    accentDeep: Color(0xFF0051A8),
-    accentTint: Color(0xFFE8F2FF),
+    surfaceVariant: Color(0xFFEBEAE5),
+    ink: Color(0xFF202B36),          // Deep Slate Ink
+    secondary: Color(0xFF5B6B78),    // Harbor Slate
+    faint: Color(0xFF97A2AD),
+    hairline: Color(0xFFE3E1DA),
+    accent: Color(0xFF2F6AA0),       // Steel Harbor Blue
+    accentFill: Color(0xFF2F6AA0),
+    accentDeep: Color(0xFF244F77),   // Harbor Deep
+    accentTint: Color(0xFFE3EDF6),   // Harbor Tint
     onAccent: Color(0xFFFFFFFF),
-    error: Color(0xFFFF3B30),        // iOS red
-    success: Color(0xFF34C759),      // iOS green
+    error: Color(0xFFB04438),        // Brick Signal
+    success: Color(0xFF2E9E6B),      // Verdant Check
     navGlassTop: Color(0xCCFFFFFF),
-    navGlassBottom: Color(0xAAF2F2F7),
+    navGlassBottom: Color(0xAAF5F4F0),   // neutral warm glass (no blue tint)
     navGlassBorder: Color(0xE0FFFFFF),
     navPillTop: Color(0xD5FFFFFF),
     navPillBottom: Color(0x80FFFFFF),

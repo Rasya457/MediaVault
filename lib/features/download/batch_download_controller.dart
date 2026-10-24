@@ -11,13 +11,14 @@ import 'storage_service.dart';
 
 enum BatchItemStatus { queued, downloading, done, failed }
 
-/// Satu lagu dalam antrian unduh playlist/album.
+/// Satu item dalam antrian unduh playlist/album/carousel foto.
 class BatchItem {
   BatchItem({
     required this.url,
     required this.filename,
     required this.title,
     this.artist = '',
+    this.extension = 'mp3',
     this.headers,
     this.thumbnail,
     this.previewUrl,
@@ -27,14 +28,28 @@ class BatchItem {
   final String filename;
   final String title;
   final String artist;
+
+  /// Ekstensi file hasil akhir: 'mp3', 'mp4', 'jpg', 'png', dll.
+  final String extension;
+
   final Map<String, String>? headers;
 
-  /// Cover playlist/album untuk riwayat unduhan (tidak ditampilkan
-  /// di daftar lagu).
+  /// Cover playlist/album untuk riwayat unduhan.
   final String? thumbnail;
 
   /// URL pratinjau audio pendek (jika tersedia).
   final String? previewUrl;
+
+  bool get isImage {
+    final ext = extension.toLowerCase();
+    return ext == 'jpg' || ext == 'jpeg' || ext == 'png' ||
+        ext == 'webp' || ext == 'heic' || ext == 'gif';
+  }
+
+  bool get isVideo {
+    final ext = extension.toLowerCase();
+    return ext == 'mp4' || ext == 'mov' || ext == 'webm' || ext == 'mkv';
+  }
 
   BatchItemStatus status = BatchItemStatus.queued;
 
@@ -148,11 +163,12 @@ class BatchDownloadController extends ChangeNotifier {
       String dlUrl = item.url;
       Map<String, String>? dlHeaders = item.headers;
 
-      // Jika URL lagu berupa identifier spotify / spotify_track atau preview 30s:
-      // resolve link audio full track agar file yang diunduh adalah lagu penuh utuh.
-      if (dlUrl.startsWith('spotify') ||
-          dlUrl.isEmpty ||
-          dlUrl.contains('p.scdn.co')) {
+      // Resolve Spotify track identifier → full YouTube audio stream.
+      if (!item.isImage &&
+          !item.isVideo &&
+          (dlUrl.startsWith('spotify') ||
+              dlUrl.isEmpty ||
+              dlUrl.contains('p.scdn.co'))) {
         try {
           final resolved = await SpotifyProvider.resolveFullTrackAudio(
             item.artist,
@@ -170,58 +186,114 @@ class BatchDownloadController extends ChangeNotifier {
         } catch (_) {}
       }
 
+      final rawFilename = item.isImage
+          ? item.filename
+          : 'raw_${item.filename}';
       final raw = await _downloads.downloadToTemp(
         url: dlUrl,
-        filename: 'raw_${item.filename}',
+        filename: rawFilename,
         headers: dlHeaders,
         onProgress: (received, total) {
-          item.progress = total > 0 ? (received / total) * 0.8 : -1;
+          item.progress = total > 0
+              ? (received / total) * (item.isImage ? 1.0 : 0.8)
+              : -1;
           notifyListeners();
         },
         cancelToken: token,
       );
+
       try {
-        final outPath = '${raw.parent.path}/${item.filename}';
-        File converted;
-        try {
-          converted = await _merger.convertToMp3(
-            input: raw,
-            outputPath: outPath,
-          );
-        } catch (_) {
-          // Sumber sering sudah berupa MP3 jadi — simpan apa adanya.
-          if (await raw.exists() && await raw.length() > 0) {
-            converted = await raw.copy(outPath);
-          } else {
-            rethrow;
+        if (item.isImage) {
+          // ---- Foto: langsung simpan ke galeri tanpa konversi ----
+          item.progress = 1.0;
+          notifyListeners();
+          await _storage.saveImage(raw);
+          item
+            ..savedPath = raw.path
+            ..status = BatchItemStatus.done;
+          try {
+            await HistoryRepository.instance.add(
+              DownloadHistoryEntry(
+                id: '${DateTime.now().millisecondsSinceEpoch}_${item.filename}',
+                url: item.url,
+                title: item.title,
+                platform: 'Instagram',
+                quality: 'Photo HD',
+                extension: BatchDownloadController.extOf(raw.path),
+                timestamp: DateTime.now(),
+                thumbnail: item.thumbnail ?? item.url,
+                savedPath: raw.path,
+              ),
+            );
+          } catch (e) {
+            debugPrint('Gagal menyimpan riwayat foto: $e');
+          }
+        } else if (item.isVideo) {
+          // ---- Video: simpan ke galeri (tanpa merge/konversi) ----
+          item.progress = 1.0;
+          notifyListeners();
+          await _storage.saveVideo(raw);
+          item
+            ..savedPath = raw.path
+            ..status = BatchItemStatus.done;
+          try {
+            await HistoryRepository.instance.add(
+              DownloadHistoryEntry(
+                id: '${DateTime.now().millisecondsSinceEpoch}_${item.filename}',
+                url: item.url,
+                title: item.title,
+                platform: 'Instagram',
+                quality: 'Video HD',
+                extension: BatchDownloadController.extOf(raw.path),
+                timestamp: DateTime.now(),
+                thumbnail: item.thumbnail,
+                savedPath: raw.path,
+              ),
+            );
+          } catch (e) {
+            debugPrint('Gagal menyimpan riwayat video: $e');
+          }
+        } else {
+          // ---- Audio/MP3: konversi via FFmpeg lalu simpan ----
+          final outPath = '${raw.parent.path}/${item.filename}';
+          File converted;
+          try {
+            converted = await _merger.convertToMp3(
+              input: raw,
+              outputPath: outPath,
+            );
+          } catch (_) {
+            if (await raw.exists() && await raw.length() > 0) {
+              converted = await raw.copy(outPath);
+            } else {
+              rethrow;
+            }
+          }
+          item.progress = 1.0;
+          final stored = await _storage.saveAudio(converted);
+          item
+            ..savedPath = stored.path
+            ..status = BatchItemStatus.done;
+          try {
+            await HistoryRepository.instance.add(
+              DownloadHistoryEntry(
+                id: '${DateTime.now().millisecondsSinceEpoch}_${item.filename}',
+                url: item.url,
+                title: item.title,
+                platform: 'Spotify',
+                quality: 'MP3',
+                extension: BatchDownloadController.extOf(stored.path),
+                timestamp: DateTime.now(),
+                thumbnail: item.thumbnail,
+                savedPath: stored.path,
+              ),
+            );
+          } catch (e) {
+            debugPrint('Gagal menyimpan ke riwayat: $e');
           }
         }
-        item.progress = 1.0;
-
-        final stored = await _storage.saveAudio(converted);
-        item
-          ..savedPath = stored.path
-          ..status = BatchItemStatus.done;
-
-        try {
-          await HistoryRepository.instance.add(
-            DownloadHistoryEntry(
-              id: '${DateTime.now().millisecondsSinceEpoch}_${item.filename}',
-              url: item.url,
-              title: item.title,
-              platform: 'Spotify',
-              quality: 'MP3',
-              extension: BatchDownloadController.extOf(stored.path),
-              timestamp: DateTime.now(),
-              thumbnail: item.thumbnail,
-              savedPath: stored.path,
-            ),
-          );
-        } catch (e) {
-          debugPrint('Gagal menyimpan ke riwayat: $e');
-        }
       } finally {
-        await _downloads.cleanup([raw]);
+        if (!item.isImage) await _downloads.cleanup([raw]);
       }
     } on DownloadCancelled {
       item
