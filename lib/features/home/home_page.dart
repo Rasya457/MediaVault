@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/theme/design_tokens.dart';
@@ -9,6 +11,10 @@ import 'platform_item.dart';
 
 /// Callback opsional untuk test / parent widget.
 typedef OnAnalyze = void Function(String url, PlatformItem? platform);
+
+/// Batas waktu total satu analisa (semua provider + fallback).
+/// Bukan pengganti timeout per-request; ini pengaman anti "loading terus".
+const Duration _kAnalyzeTimeout = Duration(seconds: 90);
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, this.onAnalyze, this.onDownloadTap});
@@ -25,6 +31,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _focusNode = FocusNode();
   bool _multiLine = false;
   bool _loading = false;
+
+  /// Peningkati setiap analisa baru/dibatalkan; dipakai membuang hasil
+  /// fetch dari analisa yang sudah batal.
+  int _analyzeGeneration = 0;
   String? _lastCheckedClipboard;
 
   @override
@@ -126,7 +136,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   /// Validasi → detect platform → langsung fetchInfo → buka PreviewPage.
   void _analyze() async {
-    if (_loading) return;
+    // Tombol saat loading berfungsi sebagai BATAL.
+    if (_loading) {
+      _cancelAnalyze();
+      return;
+    }
 
     final raw = _controller.text.trim();
     if (raw.isEmpty) return;
@@ -152,10 +166,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     setState(() => _loading = true);
 
-    try {
-      final MediaInfo info = await ProviderRegistry.instance.fetchInfo(raw);
+    // Generasi analisa: hasil fetch yang selesai setelah BATAL ditekan
+    // dibawa usang (generasi tidak cocok) — pratinjau tidak terbuka.
+    final generation = ++_analyzeGeneration;
 
-      if (!mounted) return;
+    try {
+      final MediaInfo info = await ProviderRegistry.instance
+          .fetchInfo(raw)
+          .timeout(_kAnalyzeTimeout);
+
+      if (!mounted || generation != _analyzeGeneration) return;
 
       // Langsung buka PreviewPage tanpa user perlu pilih apapun
       await Navigator.of(context).push(
@@ -164,15 +184,58 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           fullscreenDialog: true,
         ),
       );
+    } on TimeoutException {
+      if (!mounted || generation != _analyzeGeneration) return;
+      _showErrorSnackBar(
+        'Analisa memakan waktu terlalu lama. '
+        'Periksa koneksi internet lalu coba lagi.',
+      );
     } on ProviderException catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _analyzeGeneration) return;
       _showErrorSnackBar(e.message);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _analyzeGeneration) return;
       _showErrorSnackBar('Terjadi kesalahan. Periksa koneksi dan coba lagi.');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _analyzeGeneration) {
+        setState(() => _loading = false);
+      }
     }
+  }
+
+  /// Batalkan analisa yang sedang berjalan (salah tekan / terlalu lama).
+  /// Permintaan jaringan berjalan berhenti sendiri oleh timeout
+  /// per-request hasilnya diabaikan.
+  void _cancelAnalyze() {
+    setState(() {
+      _loading = false;
+      _analyzeGeneration++;
+    });
+    _showInfoSnackBar('Analisa dibatalkan.');
+  }
+
+  /// Snackbar netral untuk info kecil (mis. konfirmasi batal).
+  void _showInfoSnackBar(String message) {
+    final scheme = MoriScheme.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: TextStyle(
+            fontFamily: 'Geist',
+            color: scheme.onInverseSurface,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        backgroundColor: scheme.inverseSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(MoriRadius.button),
+        ),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 90),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _showErrorSnackBar(String message) {
@@ -364,6 +427,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildAnalyzeButton(MoriScheme scheme) {
+    // Saat analisa berjalan tombol menjadi BATAL (tetap bisa ditekan)
+    // supaya salah tekan atau analisa terlalu lama bisa dihentikan.
     return Container(
       width: double.infinity,
       height: 50,
@@ -372,15 +437,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         boxShadow: _loading ? null : MoriShadow.button,
       ),
       child: FilledButton(
-        onPressed: _loading ? null : _analyze,
+        onPressed: _analyze,
         child: _loading
-            ? SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: scheme.onAccent,
-                ),
+            ? Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: scheme.onAccent,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'BATAL',
+                    style: TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: MoriText.btnSize,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: MoriText.btnLetterSpacing,
+                    ),
+                  ),
+                ],
               )
             : Text(
                 'ANALISIS',
