@@ -131,7 +131,8 @@ String _numbered(String single, int index, int total) =>
     total <= 1 ? single : '$single $index';
 
 /// Tebak ekstensi dari URL unduhan Instagram.
-String _guessExtension(String url) {
+/// [isPhoto] dipakai sebagai fallback bila ekstensi tidak terbaca dari URL.
+String _guessExtension(String url, {bool isPhoto = false}) {
   final lower = url.toLowerCase();
   if (lower.contains('.mp4')) return 'mp4';
   if (lower.contains('.jpg') || lower.contains('.jpeg')) return 'jpg';
@@ -139,7 +140,8 @@ String _guessExtension(String url) {
   if (lower.contains('.heic')) return 'heic';
   if (lower.contains('.webp')) return 'webp';
   if (lower.contains('cdninstagram.com')) return 'jpg';
-  return 'mp4';
+  // Default berdasarkan tipe konten: foto → jpg, video → mp4.
+  return isPhoto ? 'jpg' : 'mp4';
 }
 
 /// Tebak foto vs video dari URL, termasuk sniff payload JWT
@@ -337,7 +339,7 @@ List<MediaQuality> _parseIndownItems(String html) {
           ? _numbered('Foto HD', i + 1, links.length)
           : _numbered('Video HD', i + 1, links.length),
       itag: links[i],
-      extension: photo ? _guessExtension(links[i]) : 'mp4',
+      extension: photo ? _guessExtension(links[i], isPhoto: true) : 'mp4',
       hasAudio: photo ? null : true,
     ));
   }
