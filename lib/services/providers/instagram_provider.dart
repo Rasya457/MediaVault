@@ -144,43 +144,85 @@ String _guessExtension(String url, {bool isPhoto = false}) {
   return isPhoto ? 'jpg' : 'mp4';
 }
 
-/// Tebak foto vs video dari URL, termasuk sniff payload JWT
-/// (pola referensi: token=header.payload.sig berisi ekstensi asli).
-bool _isPhotoUrl(String url) {
-  final lower = url.toLowerCase();
-  if (lower.contains('.mp4') ||
-      lower.contains('.mov') ||
-      lower.contains('.webm') ||
-      lower.contains('.mkv')) {
-    return false;
-  }
-  if (lower.contains('.jpg') ||
-      lower.contains('.jpeg') ||
-      lower.contains('.png') ||
-      lower.contains('.webp') ||
-      lower.contains('.heic')) {
+/// Tentukan video vs foto seperti scraper referensi Mori:
+/// 1) teks tombol ("Download Photo/Video") — sinyal terkuat,
+/// 2) payload token JWT (berisi nama file asli),
+/// 3) ekstensi URL.
+/// [text] boleh kosong. Default: video (unduhan IG mayoritas MP4).
+/// [tokenDefaultPhoto]: untuk SnapSave — link `/v2?token=` tanpa marker
+/// apapun di halaman yang tak punya jejak video = foto (dibuktikan fixture
+/// respons nyata SnapSave untuk post foto).
+bool _isVideoLink(
+  String url,
+  String text, {
+  bool tokenDefaultPhoto = false,
+}) {
+  final upper = text.replaceAll(RegExp(r'\s+'), ' ').toUpperCase();
+  if (upper.contains('VIDEO') ||
+      upper.contains('MP4') ||
+      upper.contains('REEL')) {
     return true;
   }
+  if (upper.contains('PHOTO') ||
+      upper.contains('IMAGE') ||
+      upper.contains('GAMBAR') ||
+      upper.contains('FOTO')) {
+    return false;
+  }
+  final sniffed = _sniffJwtPayload(url);
+  if (sniffed != null) return sniffed == 'video';
+  if (RegExp(r'\.(mp4|mov|webm|mkv)([?&]|$)', caseSensitive: false)
+      .hasMatch(url)) {
+    return true;
+  }
+  if (RegExp(r'\.(jpe?g|png|webp|heic)([?&]|$)', caseSensitive: false)
+      .hasMatch(url)) {
+    return false;
+  }
+  if (tokenDefaultPhoto && (url.contains('token=') || url.contains('/v2?'))) {
+    return false;
+  }
+  return true;
+}
+
+/// Tipe dari payload token=JWT: 'video' / 'photo'. Null bila tidak terbaca.
+String? _sniffJwtPayload(String url) {
   try {
-    final tokenMatch = RegExp(r'token=([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)')
+    final tokenMatch = RegExp(
+            r'token=([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)')
         .firstMatch(url);
-    if (tokenMatch != null) {
-      var payload = tokenMatch.group(1)!.split('.')[1]
-          .replaceAll('-', '+')
-          .replaceAll('_', '/');
-      payload = payload.padRight(
-        payload.length + (4 - payload.length % 4) % 4, '=');
-      final decoded = utf8.decode(base64.decode(payload), allowMalformed: true);
-      if (RegExp(r'\.(jpe?g|png|webp)(\?|"|$)').hasMatch(decoded)) {
-        return true;
-      }
-      if (RegExp(r'\.(mp4|mov|webm|mkv)(\?|"|$)').hasMatch(decoded)) {
-        return false;
-      }
+    if (tokenMatch == null) return null;
+    var payload = tokenMatch
+        .group(1)!
+        .split('.')[1]
+        .replaceAll('-', '+')
+        .replaceAll('_', '/');
+    payload =
+        payload.padRight(payload.length + (4 - payload.length % 4) % 4, '=');
+    final decoded =
+        utf8.decode(base64.decode(payload), allowMalformed: true).toLowerCase();
+    if (RegExp(r'\.(mp4|mov|webm|mkv)(\?|"|$)').hasMatch(decoded)) {
+      return 'video';
+    }
+    if (RegExp(r'\.(jpe?g|png|webp|heic)(\?|"|$)').hasMatch(decoded)) {
+      return 'photo';
+    }
+    // Payload teks tanpa titik: {"ext":"jpg"}, "...photo...", dst.
+    if (decoded.contains('jpg') ||
+        decoded.contains('jpeg') ||
+        decoded.contains('png') ||
+        decoded.contains('webp') ||
+        decoded.contains('photo') ||
+        decoded.contains('image')) {
+      return 'photo';
+    }
+    if (decoded.contains('mp4') ||
+        decoded.contains('video') ||
+        decoded.contains('reel')) {
+      return 'video';
     }
   } catch (_) {}
-  // Default: video (link unduhan IG mayoritas MP4).
-  return false;
+  return null;
 }
 
 /// Judul dari path URL: reel/ID -> "Instagram Reel (ID)".
@@ -290,84 +332,121 @@ class InstagramPrimaryProvider implements MediaProvider {
       _resolveQuality(await fetchInfo(url), quality);
 }
 
-/// Parse hasil indown: kumpulkan semua link unduhan sesuai urutan dokumen,
-/// klasifikasikan foto vs video per link. Tiap link = satu item carousel;
-/// label dinomori agar tidak kembar di pemilih kualitas.
-List<MediaQuality> _parseIndownItems(String html) {
-  final qualities = <MediaQuality>[];
+/// Pasangan URL unduhan + teks tombol/opsi yang mengiringinya.
+/// Teks (misal "Download Photo", class "icon-dlvideo" di dalam tombol)
+/// adalah sinyal tipe terkuat, jadi wajib ikut terbawa.
+typedef _LinkPair = ({String url, String text});
+
+/// Filter link unduhan yang boleh dipakai (buang halaman layanan & tracking).
+bool _acceptLink(String link) {
+  if (!link.startsWith('http')) return false;
+  if (link.contains('indown.net/api') ||
+      link.contains('snapsave.app') ||
+      link.contains('play.google.com') ||
+      link.contains('facebook.com') ||
+      link.contains('ads')) {
+    return false;
+  }
+  final lower = link.toLowerCase();
+  return lower.contains('rapidcdn.app') ||
+      lower.contains('snapcdn') ||
+      lower.contains('cdninstagram') ||
+      lower.contains('fbcdn') ||
+      lower.contains('.mp4') ||
+      lower.contains('.mov') ||
+      lower.contains('.jpg') ||
+      lower.contains('.jpeg') ||
+      lower.contains('.png') ||
+      lower.contains('.webp') ||
+      lower.contains('.heic') ||
+      lower.contains('token=');
+}
+
+/// Klasifikasi semua link lalu susun: video dulu, foto berikutnya, Audio MP3
+/// di akhir. Ini DIPIAKAI BERSAMA oleh parser indown dan SnapSave agar
+/// prilaku mode album/video selalu konsisten.
+List<MediaQuality> _qualitiesFromLinks(
+  Iterable<_LinkPair> found, {
+  bool tokenDefaultPhoto = false,
+}) {
+  final videos = <String>[];
+  final photos = <String>[];
   final seen = <String>{};
 
-  bool accept(String link) {
-    if (!link.startsWith('http') || !seen.add(link)) return false;
-    if (link.contains('indown.net/api') ||
-        link.contains('facebook.com') ||
-        link.contains('ads')) {
-      return false;
-    }
-    final lower = link.toLowerCase();
-    return lower.contains('rapidcdn.app') ||
-        lower.contains('snapcdn') ||
-        lower.contains('cdninstagram') ||
-        lower.contains('fbcdn') ||
-        lower.contains('.mp4') ||
-        lower.contains('.mov') ||
-        lower.contains('.jpg') ||
-        lower.contains('.jpeg') ||
-        lower.contains('.png') ||
-        lower.contains('.webp') ||
-        lower.contains('token=');
-  }
-
-  final links = <String>[];
-  for (final m in RegExp('href="([^"]+)"').allMatches(html)) {
-    final link = m.group(1)!.replaceAll('&amp;', '&');
-    if (accept(link)) links.add(link);
-  }
-  // Fallback: URL mentah tanpa <a> (JSON / JS).
-  if (links.isEmpty) {
-    for (final m in RegExp(r'https?://[^\s"<>\\]+').allMatches(html)) {
-      final link =
-          m.group(0)!.replaceAll(r'\/', '/').replaceAll('&amp;', '&');
-      if (accept(link)) links.add(link);
+  for (final item in found) {
+    final link = item.url;
+    if (!_acceptLink(link) || !seen.add(link)) continue;
+    if (_isVideoLink(
+      link,
+      item.text,
+      tokenDefaultPhoto: tokenDefaultPhoto,
+    )) {
+      videos.add(link);
+    } else {
+      photos.add(link);
     }
   }
 
-  for (var i = 0; i < links.length; i++) {
-    final photo = _isPhotoUrl(links[i]);
+  final qualities = <MediaQuality>[];
+  for (var i = 0; i < videos.length; i++) {
     qualities.add(MediaQuality(
-      label: photo
-          ? _numbered('Foto HD', i + 1, links.length)
-          : _numbered('Video HD', i + 1, links.length),
-      itag: links[i],
-      extension: photo ? _guessExtension(links[i], isPhoto: true) : 'mp4',
-      hasAudio: photo ? null : true,
+      label: _numbered('Video HD', i + 1, videos.length),
+      itag: videos[i],
+      extension: 'mp4',
+      hasAudio: true,
+    ));
+  }
+  for (var i = 0; i < photos.length; i++) {
+    qualities.add(MediaQuality(
+      label: _numbered('Foto HD', i + 1, photos.length),
+      itag: photos[i],
+      extension: _guessExtension(photos[i], isPhoto: true),
     ));
   }
 
-  // Tambahkan opsi Audio MP3 jika konten memiliki video / reel
+  // Opsi Audio MP3 hanya untuk konten yang benar-benar punya video/reel
+  // — carousel foto murni tidak diberi MP3 palsu.
   final videoQualities =
       qualities.where((q) => q.extension == 'mp4' || (q.hasAudio ?? false)).toList();
-  if (videoQualities.isNotEmpty) {
-    if (videoQualities.length == 1) {
+  if (videoQualities.length == 1) {
+    qualities.add(MediaQuality(
+      label: 'Audio MP3',
+      itag: videoQualities.first.itag,
+      extension: 'mp3',
+      hasAudio: true,
+    ));
+  } else if (videoQualities.length > 1) {
+    for (var i = 0; i < videoQualities.length; i++) {
       qualities.add(MediaQuality(
-        label: 'Audio MP3',
-        itag: videoQualities.first.itag,
+        label: 'Audio MP3 (${i + 1})',
+        itag: videoQualities[i].itag,
         extension: 'mp3',
         hasAudio: true,
       ));
-    } else {
-      for (var i = 0; i < videoQualities.length; i++) {
-        qualities.add(MediaQuality(
-          label: 'Audio MP3 (${i + 1})',
-          itag: videoQualities[i].itag,
-          extension: 'mp3',
-          hasAudio: true,
-        ));
-      }
     }
   }
 
   return qualities;
+}
+
+/// Parse hasil indown: pasangan (URL, teks tombol) tiap link unduhan.
+List<MediaQuality> _parseIndownItems(String html) {
+  final found = <_LinkPair>[];
+  for (final m in RegExp(
+    r'<a\b[^>]*?href="([^"]+)"[^>]*>(.*?)</a>',
+    dotAll: true,
+  ).allMatches(html)) {
+    found.add((url: m.group(1)!, text: m.group(2) ?? ''));
+  }
+  // Fallback: URL mentah tanpa <a> (JSON / JS).
+  if (found.isEmpty) {
+    for (final m in RegExp(r'https?://[^\s"<>\\]+').allMatches(html)) {
+      final link =
+          m.group(0)!.replaceAll(r'\/', '/').replaceAll('&amp;', '&');
+      if (_acceptLink(link)) found.add((url: link, text: ''));
+    }
+  }
+  return _qualitiesFromLinks(found);
 }
 
 /// Thumbnail item pertama: img kotak pertama, fallback URL foto itu sendiri.
@@ -378,6 +457,100 @@ String? _firstThumbnail(String html, List<MediaQuality> qualities) {
     if (q.extension != 'mp4') return q.itag;
   }
   return null;
+}
+
+/// Unescape JS string literal: \n \t \r \" \' \\ \/ dan \uXXXX.
+String _unescapeJs(String raw) {
+  return raw.replaceAllMapped(
+    RegExp(r'''\\(u[0-9a-fA-F]{4}|n|t|r|["'\\/])'''),
+    (m) {
+      final g = m.group(1)!;
+      switch (g) {
+        case 'n':
+          return '\n';
+        case 't':
+          return '\t';
+        case 'r':
+          return '\r';
+        case '"':
+        case "'":
+          return g;
+        case '/':
+          return '/';
+        case '\\':
+          return '\\';
+      }
+      if (g.startsWith('u') && g.length == 5) {
+        final cp = int.tryParse(g.substring(1), radix: 16);
+        if (cp != null) return String.fromCharCode(cp);
+      }
+      return g;
+    },
+  );
+}
+
+/// Buka bentuk respons JS yang berisi `innerHTML = "..."` /
+/// `document.write("...")` (belum terangkai decodeSnapSave), atauraun slice
+/// `<ul ...>...</ul>` langsung di dalam script. Pola referensi Mori.
+String? _extractInnerHtml(String js) {
+  const markers = [
+    'innerHTML = "',
+    "innerHTML = '",
+    'innerHTML="',
+    "innerHTML='",
+    'document.write("',
+    "document.write('",
+  ];
+  for (final marker in markers) {
+    final start = js.indexOf(marker);
+    if (start < 0) continue;
+    final contentStart = start + marker.length;
+    final closing = marker.substring(marker.length - 1);
+    final end = js.lastIndexOf(closing);
+    if (end <= contentStart) continue;
+    final unescaped = _unescapeJs(js.substring(contentStart, end));
+    if (unescaped.contains('href=')) return unescaped;
+  }
+  final ulStart = js.indexOf('<ul');
+  final ulEnd = js.lastIndexOf('</ul>');
+  if (ulStart >= 0 && ulEnd > ulStart) {
+    final slice = js.substring(ulStart, ulEnd + 5);
+    if (slice.contains('href=')) return slice;
+  }
+  return null;
+}
+
+/// Parse respons SnapSave: pasangan tombol <a> + opsi <select> (kualitas
+/// disimpan sebagai value URL). Regex `\\?"` menangani HTML polos maupun
+/// hasil yang masih ter-escape.
+List<MediaQuality> _parseSnapItems(String html) {
+  final found = <_LinkPair>[];
+  for (final m in RegExp(
+    r'<a\b[^>]*?href=\\?"([^"\\]+)\\?"[^>]*>(.*?)</a>',
+    dotAll: true,
+  ).allMatches(html)) {
+    found.add((url: m.group(1)!, text: m.group(2) ?? ''));
+  }
+  // Opsi select: <option value="URL" ...>720p</option>
+  for (final m in RegExp(
+    r'<option[^>]*?value=\\?"([^"\\]+)\\?"[^>]*>(.*?)</option>',
+    dotAll: true,
+  ).allMatches(html)) {
+    found.add((url: m.group(1)!, text: m.group(2) ?? ''));
+  }
+  if (found.isEmpty) {
+    for (final m in RegExp(r'href=\\?"([^"\\]+)\\?"').allMatches(html)) {
+      found.add((url: m.group(1)!, text: ''));
+    }
+  }
+  // Halaman murni-foto (tanpa .mp4 / icon-dlvideo) → link /v2?token adalah
+  // foto; sedikit jejak video dari manapun → kembali default video.
+  final pageHasVideoMarker =
+      html.contains('.mp4') || html.contains('icon-dlvideo');
+  return _qualitiesFromLinks(
+    found,
+    tokenDefaultPhoto: !pageHasVideoMarker,
+  );
 }
 
 class InstagramFallbackProvider implements MediaProvider {
@@ -403,84 +576,20 @@ class InstagramFallbackProvider implements MediaProvider {
       referer: 'https://snapsave.app/',
     );
 
-    // Unpack hunter script jika ada, atau gunakan raw jika plain HTML (misal di test)
+    // Pembungkus respons dipecah bertingkat (pola referensi Mori):
+    // 1) hunter script (Dean-Edwards),
+    // 2) bentuk JS `innerHTML = "..."` / `document.write("...")`,
+    // 3) slice <ul class="download-box">...</ul>,
+    // 4) mentah apa adanya.
     final decoded = decodeSnapSave(raw) ?? raw;
-
-    final qualities = <MediaQuality>[];
-    final seen = <String>{};
-    String? thumbnail;
-
-    // Ambil thumbnail dari download-items__thumb atau img src
-    final thumbMatch = RegExp(
-      r'<div[^>]*class=\\?"download-items__thumb\\?"[^>]*>.*?<img[^>]*src=\\?"([^"\\]+)\\?"',
-      dotAll: true,
-    ).firstMatch(decoded);
-    thumbnail = thumbMatch?.group(1);
-    if (thumbnail == null) {
-      final anyImg = RegExp(r'<img[^>]*src=\\?"(https?://[^"\\]+)\\?"')
-          .firstMatch(decoded);
-      thumbnail = anyImg?.group(1);
+    var html = _extractInnerHtml(raw) ?? _extractInnerHtml(decoded) ?? '';
+    if (html.isEmpty) html = decoded;
+    if (!html.contains('href=')) {
+      html = _extractInnerHtml(html) ?? '';
     }
+    if (html.isEmpty) html = decoded;
 
-    // Ekstrak item terstruktur (video / foto carousel)
-    final itemBlocks = RegExp(
-      r'<div[^>]*class=\\?"download-items\\?"[^>]*>(.*?)</div>\s*</div>',
-      dotAll: true,
-    ).allMatches(decoded);
-
-    if (itemBlocks.isNotEmpty) {
-      var itemIndex = 1;
-      for (final block in itemBlocks) {
-        final blockContent = block.group(1) ?? '';
-        final isVideo = blockContent.contains('icon-dlvideo') ||
-            blockContent.contains('.mp4');
-        final hrefMatch =
-            RegExp(r'href=\\?"([^"\\]+)\\?"').firstMatch(blockContent);
-        if (hrefMatch != null) {
-          final link = hrefMatch.group(1)!;
-          if (link.startsWith('http') &&
-              !link.contains('play.google.com') &&
-              seen.add(link)) {
-            final label = itemBlocks.length == 1
-                ? (isVideo ? 'Video HD' : 'Photo HD')
-                : (isVideo ? 'Video $itemIndex' : 'Photo $itemIndex');
-            qualities.add(MediaQuality(
-              label: label,
-              itag: link,
-              extension: isVideo ? 'mp4' : 'jpg',
-            ));
-            itemIndex++;
-          }
-        }
-      }
-    }
-
-    // Jika blok spesifik tidak ada, fallback ke pencarian regex href
-    if (qualities.isEmpty) {
-      final hrefMatches = RegExp(r'href=\\?"([^"\\]+)\\?"').allMatches(decoded);
-      var idx = 1;
-      for (final m in hrefMatches) {
-        final link = m.group(1)!;
-        if (link.startsWith('http') &&
-            !link.contains('play.google.com') &&
-            (link.contains('rapidcdn.app') ||
-                link.contains('.mp4') ||
-                link.contains('cdninstagram')) &&
-            seen.add(link)) {
-          final isVideo =
-              link.contains('.mp4') || decoded.contains('icon-dlvideo');
-          qualities.add(MediaQuality(
-            label: idx == 1
-                ? (isVideo ? 'Video HD' : 'Media HD')
-                : (isVideo ? 'Video (alt)' : 'Media $idx'),
-            itag: link,
-            extension: isVideo ? 'mp4' : 'jpg',
-          ));
-          idx++;
-        }
-      }
-    }
-
+    final qualities = _parseSnapItems(html);
     if (qualities.isEmpty) {
       throw const ProviderException(
         message: 'snapsave: tidak ada link ditemukan.',
@@ -488,24 +597,23 @@ class InstagramFallbackProvider implements MediaProvider {
       );
     }
 
-    final videoQualities =
-        qualities.where((q) => q.extension == 'mp4' || (q.hasAudio ?? false)).toList();
-    if (videoQualities.isNotEmpty) {
-      if (videoQualities.length == 1) {
-        qualities.add(MediaQuality(
-          label: 'Audio MP3',
-          itag: videoQualities.first.itag,
-          extension: 'mp3',
-          hasAudio: true,
-        ));
-      } else {
-        for (var i = 0; i < videoQualities.length; i++) {
-          qualities.add(MediaQuality(
-            label: 'Audio MP3 (${i + 1})',
-            itag: videoQualities[i].itag,
-            extension: 'mp3',
-            hasAudio: true,
-          ));
+    // Thumbnail: img kotak thumbnail dulu, img lain, lalu link foto pertama
+    // (URL foto itu sendiri layak sebagai pratinjau).
+    final thumbMatch = RegExp(
+      r'<div[^>]*class=\\?"download-items__thumb\\?"[^>]*>.*?<img[^>]*src=\\?"([^"\\]+)\\?"',
+      dotAll: true,
+    ).firstMatch(html);
+    var thumbnail = thumbMatch?.group(1);
+    if (thumbnail == null) {
+      final anyImg = RegExp(r'<img[^>]*src=\\?"(https?://[^"\\]+)\\?"')
+          .firstMatch(html);
+      thumbnail = anyImg?.group(1);
+    }
+    if (thumbnail == null) {
+      for (final q in qualities) {
+        if (q.extension != 'mp4' && q.extension != 'mp3') {
+          thumbnail = q.itag;
+          break;
         }
       }
     }

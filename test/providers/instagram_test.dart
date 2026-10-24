@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediavault/core/network/api_client.dart' as client_lib;
@@ -94,10 +95,67 @@ void main() {
       expect(info.title, contains('ABC123'));
       expect(info.thumbnail, contains('thumb.jpg'));
       expect(info.qualities.first.extension, equals('mp4'));
-      expect(info.qualities.first.label, equals('Video HD 1'));
-      expect(info.qualities[1].label, equals('Foto HD 2'));
+      // Satu video tak dinomori ("Video HD"), banyak video = "Video HD 1..n".
+      expect(info.qualities.first.label, equals('Video HD'));
+      // Penomoran foto sekarang per-tipe (1 foto pun tanpa nomor).
+      expect(info.qualities[1].label, equals('Foto HD'));
       expect(info.qualities.any((q) => q.label == 'Audio MP3'), isTrue);
       expect(info.source, equals('third-party'));
+    });
+
+    test('carousel campur: video dulu, lalu foto, Audio MP3 terakhir',
+        () async {
+      final token = base64Url
+          .encode(utf8.encode('video.mp4'))
+          .replaceAll('=', '');
+      final html = '<html>'
+          '<div class="download-items">'
+          '<a href="https://cdninstagram.com/v/t51.2885-15/a_n.jpg">'
+          'Download Photo</a></div>'
+          '<div class="download-items">'
+          '<a href="https://rapidcdn.app/v2?token=h.$token.s">Download</a></div>'
+          '<div class="download-items">'
+          '<a href="https://cdninstagram.com/v/t51.2885-15/b_n.jpg">'
+          'Download</a></div>'
+          '</html>';
+      setupMockDio(postResponseData: {'data': html});
+      final info = await InstagramPrimaryProvider().fetchInfo(
+        'https://www.instagram.com/p/AB1/',
+      );
+
+      // Video dipindah ke depan agar mode "url isinya video" tetap video.
+      expect(info.qualities.length, equals(4));
+      expect(info.qualities.first.label, equals('Video HD'));
+      expect(info.qualities.first.extension, equals('mp4'));
+      expect(info.qualities[1].label, equals('Foto HD 1'));
+      expect(info.qualities[1].extension, equals('jpg'));
+      expect(info.qualities[2].label, equals('Foto HD 2'));
+      expect(info.qualities.last.label, equals('Audio MP3'));
+      expect(info.qualities.last.itag, equals(info.qualities.first.itag));
+    });
+
+    test('carousel foto murni: tanpa Audio MP3', () async {
+      final token = base64Url
+          .encode(utf8.encode('photo1.jpg'))
+          .replaceAll('=', '');
+      final html = '<html>'
+          '<div class="download-items">'
+          '<a href="https://rapidcdn.app/v2?token=h.$token.s">Download</a></div>'
+          '<div class="download-items">'
+          '<a href="https://cdninstagram.com/v/t51.2885-15/c_n.jpg">'
+          'Download Photo</a></div>'
+          '</html>';
+      setupMockDio(postResponseData: {'data': html});
+      final info = await InstagramPrimaryProvider().fetchInfo(
+        'https://www.instagram.com/p/AB2/',
+      );
+
+      expect(info.qualities.length, equals(2));
+      for (final q in info.qualities) {
+        expect(q.extension, equals('jpg'));
+      }
+      expect(info.qualities.any((q) => q.extension == 'mp3'), isFalse);
+      expect(info.qualities.any((q) => q.extension == 'mp4'), isFalse);
     });
 
     test('respons tanpa data -> noResult', () async {
@@ -182,6 +240,63 @@ void main() {
       expect(info.qualities.first.itag, contains('rapidcdn.app/v2'));
       expect(info.qualities.first.extension, equals('jpg'));
       expect(info.thumbnail, contains('rapidcdn.app/thumb'));
+    });
+
+    test('carousel foto murni (tanpa marker): token link = Foto HD', () async {
+      setupMockDio(
+        plainResponse: '<div class="download-items">'
+            '<div class="download-items__thumb">'
+            '<img src="https://d.rapidcdn.app/thumb?token=ta"></div>'
+            '<div class="download-items__btn">'
+            '<a href="https://d.rapidcdn.app/v2?token=tb" class="btn">Download</a>'
+            '</div></div>'
+            '<div class="download-items">'
+            '<div class="download-items__thumb">'
+            '<img src="https://d.rapidcdn.app/thumb?token=tc"></div>'
+            '<div class="download-items__btn">'
+            '<a href="https://d.rapidcdn.app/v2?token=td" class="btn">Download</a>'
+            '</div></div>',
+      );
+      final info = await InstagramFallbackProvider().fetchInfo(
+        'https://www.instagram.com/p/DebLR1ux4x-/',
+      );
+      // Mode album murni-foto: 2 foto, tanpa video / tanpa MP3 palsu.
+      expect(info.qualities.length, equals(2));
+      expect(info.qualities[0].label, equals('Foto HD 1'));
+      expect(info.qualities[0].extension, equals('jpg'));
+      expect(info.qualities[1].label, equals('Foto HD 2'));
+      expect(info.qualities[1].extension, equals('jpg'));
+      expect(info.qualities.any((q) => q.extension == 'mp3'), isFalse);
+    });
+
+    test('jejak .mp4 di halaman: link token kembali jadi video', () async {
+      setupMockDio(
+        plainResponse: '<div class="download-items__btn">'
+            '<a href="https://d.rapidcdn.app/v2?token=te" class="btn">Download</a>'
+            '</div>'
+            '<a href="https://cdn.ig.com/clip.mp4">Download Video</a>',
+      );
+      final info = await InstagramFallbackProvider().fetchInfo(
+        'https://www.instagram.com/p/DebLR1ux4x-/',
+      );
+      expect(info.qualities.first.extension, equals('mp4'));
+      expect(info.qualities.first.itag, contains('rapidcdn.app/v2'));
+      expect(info.qualities.any((q) => q.extension == 'mp3'), isTrue);
+    });
+
+    test('bentuk JS innerHTML dibuka walau href ter-escape', () async {
+      setupMockDio(
+        plainResponse: "var s=document.getElementById('d')"
+            ".innerHTML = \"<a href=\\\"https://d.rapidcdn.app/v2?token=tf\\\">"
+            "Download</a>\";",
+      );
+      final info = await InstagramFallbackProvider().fetchInfo(
+        'https://www.instagram.com/p/DebLR1ux4x-/',
+      );
+      // Halaman tanpa marker video → token link adalah foto.
+      expect(info.qualities, isNotEmpty);
+      expect(info.qualities.first.itag, contains('rapidcdn.app/v2'));
+      expect(info.qualities.first.extension, equals('jpg'));
     });
   });
 }
