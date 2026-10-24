@@ -133,6 +133,10 @@ class SpotifyPrimaryProvider implements MediaProvider {
   @override
   bool canHandle(String url) => _canHandleSpotify(url);
 
+  /// Resolusi track paralel (batch 5). Setiap /action/track ~2-5 detik;
+  /// serial 20 track = 100 detik (dasar "spotify ga bisa" di perangkat).
+  static const int _batchResolve = 5;
+
   @override
   Future<MediaInfo> fetchInfo(String url) async {
     final cfg = await RemoteConfig.instance.get(_kPrimaryId);
@@ -156,7 +160,8 @@ class SpotifyPrimaryProvider implements MediaProvider {
         _down('spotimate', e);
       }
 
-      // 2. Verifikasi user -> token.
+      // 2. Verifikasi user -> token (bukti LIVE 24 Okt 2026: action
+      //    menolak cftoken kosong dengan "authentication token is invalid").
       String cfToken = '';
       try {
         final res = await httpClient.post<dynamic>(
@@ -172,7 +177,8 @@ class SpotifyPrimaryProvider implements MediaProvider {
           ),
         );
         final body = _asJson(res.data);
-        if (body['success'] == true && (body['token'] ?? '').toString().isNotEmpty) {
+        if (body['token'] != null &&
+            body['token'].toString().trim().isNotEmpty) {
           cfToken = body['token'].toString();
         }
       } on DioException {
@@ -194,7 +200,7 @@ class SpotifyPrimaryProvider implements MediaProvider {
       } on DioException catch (e) {
         _down('spotimate', e);
       }
-      if (action['success'] == false) {
+      if (action['error'] == true) {
         throw ProviderException(
           message:
               'soundloaders: ${action['message'] ?? 'gagal memproses'}.',
@@ -210,25 +216,56 @@ class SpotifyPrimaryProvider implements MediaProvider {
         );
       }
 
-      // 4. Resolve tiap track ke link MP3 langsung. Cover dibuang —
-      //    audio saja; cover playlist dipakai sebagai thumbnail header.
-      final multi = parsed.tracks.length > 1;
-      final qualities = <MediaQuality>[];
+      // 4. Resolve tiap track ke link MP3 langsung (paralel per batch).
+      //    Cover dibuang — audio saja; cover playlist jadi thumbnail header.
       final count = parsed.tracks.length.clamp(0, _kMaxTracks);
+      final resolved = await _resolveSoundLoadersTracksParallel(
+        base,
+        link,
+        parsed.tracks,
+        count,
+      );
+
+      final qualities = <MediaQuality>[];
+      var resolvedCount = 0;
       for (var i = 0; i < count; i++) {
+        final linkInfo = resolved[i];
+        if (linkInfo == null) continue;
+        resolvedCount++;
         final t = parsed.tracks[i];
         final name = t.artist.isNotEmpty ? '${t.artist} - ${t.title}' : t.title;
-        final links = await _resolveSoundLoadersTrack(base, link, t);
-        if (links.isEmpty) continue;
-        for (final l in links) {
-          if (l.isCover) continue;
+        qualities.add(MediaQuality(
+          label: count > 1 ? '${_pad(i + 1, count)} $name [MP3]' : 'MP3',
+          itag: linkInfo.url,
+          extension: 'mp3',
+        ));
+      }
+
+      // 5. Playlist gratis spotimate hanya resolusi 5 track pertama
+      //    (bukti LIVE: track 6+ = error). Sisa track dilengkapi preview
+      //    resmi 30 detik dari CDN Spotify (embed), label [MP3 30s].
+      if (resolvedCount < count && parsed.type != 'track') {
+        final previews = await _fetchSpotifyEmbedTrackList(link);
+        for (var i = 0; i < count; i++) {
+          if (resolved[i] != null || i >= previews.length) continue;
+          final preview = previews[i].previewUrl;
+          if (preview == null || preview.isEmpty) continue;
+          final t = parsed.tracks[i];
+          var name = t.artist.isNotEmpty ? '${t.artist} - ${t.title}' : t.title;
+          if (name.isEmpty) {
+            final e = previews[i];
+            name = e.artist.isNotEmpty ? '${e.artist} - ${e.title}' : e.title;
+          }
           qualities.add(MediaQuality(
-            label: multi ? '${_pad(i + 1, count)} $name [MP3]' : 'MP3',
-            itag: l.url,
+            label: '${_pad(i + 1, count)} $name [MP3 30s]',
+            itag: preview,
+            audioUrl: preview,
             extension: 'mp3',
+            hasAudio: true,
           ));
         }
       }
+
       if (qualities.isEmpty) {
         throw const ProviderException(
           message: 'soundloaders: tidak ada link audio ditemukan.',
@@ -263,6 +300,56 @@ class SpotifyPrimaryProvider implements MediaProvider {
   @override
   Future<String> fetchDownloadUrl(String url, {String quality = 'best'}) async =>
       _resolveQuality(await fetchInfo(url), quality);
+}
+
+/// Resolve daftar track spotimate secara paralel (batch [_batchResolve]).
+/// Free plan spotimate membatasi 5 track pertama — batch berturut-turut
+/// kosong 2x dianggap limit dan resolusi dihentikan lebih awal.
+Future<List<_SlLink?>> _resolveSoundLoadersTracksParallel(
+  String base,
+  String pageUrl,
+  List<_SlTrack> tracks,
+  int count,
+) async {
+  final out = List<_SlLink?>.filled(count, null, growable: false);
+  var emptyBatches = 0;
+  var resolvedCount = 0;
+  for (
+    var start = 0;
+    start < count;
+    start += SpotifyPrimaryProvider._batchResolve
+  ) {
+    final end =
+        start + SpotifyPrimaryProvider._batchResolve > count
+            ? count
+            : start + SpotifyPrimaryProvider._batchResolve;
+    // Bangun future dulu supaya benar-benar paralel (await di dalam
+    // literal list akan dieksekusi berurutan).
+    final futures = <Future<List<_SlLink>>>[
+      for (var i = start; i < end; i++)
+        _resolveSoundLoadersTrack(base, pageUrl, tracks[i]),
+    ];
+    final links = await Future.wait(futures);
+    var batchEmpty = true;
+    for (var k = 0; k < links.length; k++) {
+      final audio = links[k].where((l) => !l.isCover).toList();
+      if (audio.isNotEmpty) {
+        out[start + k] = audio.first;
+        batchEmpty = false;
+        resolvedCount++;
+      }
+    }
+    if (batchEmpty) {
+      // Bukti LIVE: free plan spotimate resolve hanya 5 track pertama;
+      // batch kosong setelah ada hasil = limit tercapai, berhenti segera
+      // (sisa track diisi preview 30s via embed). Batch kosong TANPA hasil
+      // sama sekali diizinkan 1x (jitter pengiriman) sebelum menyerah.
+      if (resolvedCount > 0) break;
+      emptyBatches++;
+      if (emptyBatches >= 2) break;
+    }
+  }
+  return out;
 }
 
 String _pad(int i, int total) =>
@@ -332,10 +419,24 @@ _SlParsed _parseSoundLoadersTracks(String html) {
               .firstMatch(html);
   if (artistMatch != null) artist = _unescape(artistMatch.group(1) ?? '');
 
-  if (html.contains('playlist-songs') ||
+  // Bukti LIVE 24 Okt 2026: spotimate menandai jenis koleksi di
+  // data-kind="Playlist"/"Album" pada <section class="sm-collection">.
+  // Deteksi lama ('Album' plain  false-positive oleh teks "albums" di
+  // deskripsi premium) jadi pakai data-kind dulu, lalu warisan lama.
+  final kind = RegExp('data-kind="([^"]+)"', caseSensitive: false)
+      .firstMatch(html)
+      ?.group(1)
+      ?.toLowerCase();
+  if (kind == 'album') {
+    type = 'album';
+  } else if (kind == 'playlist') {
+    type = 'playlist';
+  } else if (html.contains('playlist-songs') ||
       html.contains('Playlist') ||
       html.contains('dltracks')) {
-    type = html.contains('Album') ? 'album' : 'playlist';
+    type = html.contains('Album') && !html.contains('Playlist')
+        ? 'album'
+        : 'playlist';
   }
 
   final tracks = <_SlTrack>[];
@@ -704,6 +805,57 @@ Future<MediaQuality?> _matchYouTubeAudio(String artist, String title) async {
   return null;
 }
 
+/// Tracklist preview resmi (30 detik) dari halaman embed Spotify.
+/// Dipakai untuk melengkapi track playlist yang tidak di-resolve
+/// spotimate (free limit 5). Best-effort: gagal => list kosong.
+Future<List<({String title, String artist, String? previewUrl})>>
+    _fetchSpotifyEmbedTrackList(String url) async {
+  try {
+    final parsed = _parseSpotifyTypeAndId(url);
+    if (parsed == null) return [];
+    final res = await httpClient.get<String>(
+      'https://open.spotify.com/embed/${parsed.type}/${parsed.id}',
+      options: Options(
+        responseType: ResponseType.plain,
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              ' (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept':
+              'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      ),
+    );
+    final html = res.data ?? '';
+    if (html.isEmpty) return [];
+    final nextDataMatch = RegExp(
+      r'<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)</script>',
+    ).firstMatch(html);
+    if (nextDataMatch == null) return [];
+    final json = jsonDecode(nextDataMatch.group(1)!) as Map<String, dynamic>;
+    final entity =
+        (json['props']?['pageProps']?['state']?['data']?['entity'] as Map?)
+                ?.cast<String, dynamic>() ??
+            {};
+    final trackList = (entity['trackList'] as List?) ?? [];
+    final out =
+        <({String title, String artist, String? previewUrl})>[];
+    for (final t in trackList) {
+      if (t is Map) {
+        out.add((
+          title: (t['title'] ?? t['name'] ?? '').toString(),
+          artist: (t['subtitle'] ?? '').toString(),
+          previewUrl: t['audioPreview']?['url']?.toString(),
+        ));
+      }
+    }
+    return out;
+  } catch (_) {
+    return [];
+  }
+}
+
 Future<MediaInfo> _fetchSpotifyEmbedPipeline(String url) async {
   final resolvedUrl = await _resolveShortLink(url);
   final parsed = _parseSpotifyTypeAndId(resolvedUrl);
@@ -864,7 +1016,7 @@ Future<MediaInfo> _fetchSpotifyEmbedPipeline(String url) async {
           ? t.previewUrl!
           : 'spotify_track:${t.title}:${t.artist}';
       qualities.add(MediaQuality(
-        label: '${_pad(i + 1, count)} $tName [MP3]',
+        label: '${_pad(i + 1, count)} $tName [MP3 30s]',
         itag: itag,
         audioUrl: t.previewUrl,
         extension: 'mp3',

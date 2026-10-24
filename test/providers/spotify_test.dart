@@ -255,6 +255,115 @@ void main() {
       expect(info.qualities.any((q) => q.label.contains('Cover')), isFalse);
     });
   });
+
+  // Regresi playlist Spotify LIVE 24 Okt 2026 (bukti via PowerShell):
+  // - /api/userverify WAJIB (token diteruskan ke cftoken action);
+  // - action dengan data-kind="Playlist" berisi 50 form track;
+  // - free plan hanya resolve 5 track pertama, sisanya error:true;
+  // - batch paralel 5 berhenti setelah batch kosong pertama saat sudah
+  //   ada hasil (playlist 50 track = ~10 panggilan, bukan 100+ detik);
+  // - sisa track diisi preview resmi 30 detik dari embed Spotify.
+  group('SpotifyPrimaryProvider playlist (soundloaders)', () {
+    List<String> buildTrackForms(int n) {
+      final forms = <String>[];
+      for (var i = 1; i <= n; i++) {
+        forms.add(
+          '<div class="sm-track"><form name="submitapurl">'
+          '<input name="data" value="${_b64({'name': 'Lagu$i', 'artist': 'Artis$i'})}">'
+          '<input name="base" value="b"><input name="token" value="tt">'
+          '</form></div>',
+        );
+      }
+      return forms;
+    }
+
+    String embedHtml(int n) {
+      final nextData = jsonEncode({
+        'props': {
+          'pageProps': {
+            'state': {
+              'data': {
+                'entity': {
+                  'title': 'Playlist Gua',
+                  'trackList': [
+                    for (var i = 1; i <= n; i++)
+                      {
+                        'title': 'Lagu$i',
+                        'subtitle': 'Artis$i',
+                        'audioPreview': {
+                          'url': 'https://p.scdn.co/prev/$i.mp3',
+                        },
+                      },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      });
+      return '<html><script id="__NEXT_DATA__">$nextData</script></html>';
+    }
+
+    test('5 track penuh + sisa preview 30s; parallel berhenti di limit',
+        () async {
+      var trackCalls = 0;
+      client_lib.httpClient.httpClientAdapter = _RouteAdapter((options) {
+        final path = options.path;
+        if (options.method.toUpperCase() == 'GET') {
+          // GET en1 maupun GET embed Spotify.
+          if (path.contains('/embed/')) {
+            return {'__plain': embedHtml(8)};
+          }
+          return {'__plain': '<html>home</html>'};
+        }
+        if (path.endsWith('/api/userverify')) {
+          return {'success': true, 'token': 'TOK123'};
+        }
+        if (path.endsWith('/action/track')) {
+          trackCalls++;
+          if (trackCalls <= 5) {
+            return {
+              'data':
+                  '<a href="https://dl.spotimate.app/mp3/full$trackCalls.mp3">'
+                  'Download Mp3</a>',
+            };
+          }
+          return {'error': true, 'message': 'free limit'};
+        }
+        return {
+          'success': true,
+          'html': '<section class="sm-collection" data-kind="Playlist">'
+              '<img class="sm-cover" src="https://i.scdn.co/cover.jpg">'
+              '<h3>Playlist Gua</h3>'
+              '${buildTrackForms(8).join()}'
+              '</section>',
+        };
+      });
+      final info = await SpotifyPrimaryProvider().fetchInfo(
+        'https://open.spotify.com/playlist/37i9dQZF1E8PHsvBMNwLWo',
+      );
+
+      expect(info.title, equals('Artis1 - Playlist Gua (Playlist)'));
+      expect(info.thumbnail, equals('https://i.scdn.co/cover.jpg'));
+      expect(info.qualities.length, equals(8));
+      final full =
+          info.qualities.where((q) => q.label.contains('[MP3]')).toList();
+      expect(full.length, equals(5));
+      final previews =
+          info.qualities.where((q) => q.label.contains('[MP3 30s]')).toList();
+      expect(previews.length, equals(3));
+      for (final p in previews) {
+        expect(p.itag, startsWith('https://p.scdn.co/'));
+        expect(p.hasAudio, isTrue);
+        expect(p.audioUrl, isNotEmpty);
+      }
+      expect(info.qualities.first.label, equals('1 Artis1 - Lagu1 [MP3]'));
+      expect(
+        info.qualities.last.label,
+        equals('8 Artis8 - Lagu8 [MP3 30s]'),
+      );
+    });
+  });
 }
 
 bool pathEnds(String path, String suffix) => path.endsWith('/$suffix');
