@@ -22,14 +22,12 @@ class LiquidGlassNavBar extends StatefulWidget {
     required this.items,
     required this.currentIndex,
     required this.onTap,
-    this.pageController,
     this.blur = 25.0,
   });
 
   final List<NavItem> items;
   final int currentIndex;
   final ValueChanged<int> onTap;
-  final PageController? pageController;
 
   /// Gaussian blur sigma untuk efek frosted glass.
   final double blur;
@@ -67,34 +65,13 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic),
     );
 
-    widget.pageController?.addListener(_onPageScroll);
   }
 
   @override
   void didUpdateWidget(LiquidGlassNavBar old) {
     super.didUpdateWidget(old);
-    if (old.pageController != widget.pageController) {
-      old.pageController?.removeListener(_onPageScroll);
-      widget.pageController?.addListener(_onPageScroll);
-    }
     if (old.currentIndex != widget.currentIndex && !_isDragging) {
       _animateTo(widget.currentIndex.toDouble());
-    }
-  }
-
-  void _onPageScroll() {
-    if (_isDragging) return;
-    final page = widget.pageController?.page;
-    if (page != null) {
-      final nearest = page.round();
-      if (nearest != _lastHapticIndex) {
-        _lastHapticIndex = nearest;
-        HapticFeedback.selectionClick();
-      }
-      setState(() {
-        _currentPos = page;
-        _anim = AlwaysStoppedAnimation<double>(page);
-      });
     }
   }
 
@@ -112,7 +89,6 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
 
   @override
   void dispose() {
-    widget.pageController?.removeListener(_onPageScroll);
     _ctrl.dispose();
     super.dispose();
   }
@@ -142,11 +118,6 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       _anim = AlwaysStoppedAnimation<double>(nextVal);
     });
 
-    if (widget.pageController != null && widget.pageController!.hasClients) {
-      widget.pageController!.jumpTo(
-        nextVal * widget.pageController!.position.viewportDimension,
-      );
-    }
   }
 
   void _handleDragEnd(DragEndDetails details) {

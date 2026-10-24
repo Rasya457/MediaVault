@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediavault/features/home/home_page.dart';
 import 'package:mediavault/features/home/platform_item.dart';
@@ -10,7 +10,8 @@ void main() {
     await tester.pumpWidget(
       const MaterialApp(home: AppShell()),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('MORI'), findsOneWidget);
     expect(find.text('Tempel link di sini...'), findsOneWidget);
@@ -92,7 +93,7 @@ void main() {
     expect(find.byIcon(Icons.format_list_bulleted), findsOneWidget);
   });
 
-  // ── Unit tests: deteksi platform tanpa Dio / network ──────────────────────
+  // â”€â”€ Unit tests: deteksi platform tanpa Dio / network â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   group('detectPlatform', () {
     test('TikTok standar dikenali', () {
       final p = detectPlatform('https://www.tiktok.com/@user/video/123');

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/design_tokens.dart';
 import '../home/home_page.dart';
 import '../history/history_page.dart';
@@ -20,28 +20,31 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
-  late final PageController _pageController;
 
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(initialPage: _currentIndex);
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
+  double _dragStartX = 0;
+  static const double _swipeThreshold = 60.0;
 
   void _onTabChanged(int index) {
     if (_currentIndex == index) return;
     setState(() => _currentIndex = index);
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-    );
+  }
+
+  void _onDragStart(DragStartDetails d) {
+    _dragStartX = d.globalPosition.dx;
+  }
+
+  void _onDragEnd(DragEndDetails d) {
+    final dx = d.globalPosition.dx - _dragStartX;
+    final velocity = d.velocity.pixelsPerSecond.dx;
+
+    final swipeLeft = dx < -_swipeThreshold || velocity < -300;
+    final swipeRight = dx > _swipeThreshold || velocity > 300;
+
+    if (swipeLeft && _currentIndex < _navItems.length - 1) {
+      _onTabChanged(_currentIndex + 1);
+    } else if (swipeRight && _currentIndex > 0) {
+      _onTabChanged(_currentIndex - 1);
+    }
   }
 
   @override
@@ -50,50 +53,41 @@ class _AppShellState extends State<AppShell> {
     return Scaffold(
       backgroundColor: scheme.background,
       extendBody: true,
-      // Bar glass ditaruh DI ATAS body (Stack), bukan di bawahnya, karena
-      // liquid glass hanya merefraksi konten yang ada di belakangnya.
-      body: Stack(
-        children: [
-          // PageView dengan swipe horizontal yang terhubung langsung ke navbar
-          PageView(
-            controller: _pageController,
-            onPageChanged: (index) {
-              setState(() => _currentIndex = index);
-            },
-            physics: const BouncingScrollPhysics(),
-            children: const [
-              SafeArea(bottom: false, child: _NavInset(child: HomePage())),
-              SafeArea(bottom: false, child: _NavInset(child: HistoryPage())),
-              SafeArea(bottom: false, child: _NavInset(child: SettingsPage())),
-            ],
-          ),
-
-          // Floating Liquid Glass Bottom Navigation Bar
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: LiquidGlassNavBar(
-              items: _navItems,
-              currentIndex: _currentIndex,
-              pageController: _pageController,
-              onTap: _onTabChanged,
+      body: GestureDetector(
+        onHorizontalDragStart: _onDragStart,
+        onHorizontalDragEnd: _onDragEnd,
+        behavior: HitTestBehavior.translucent,
+        child: Stack(
+          children: [
+            IndexedStack(
+              index: _currentIndex,
+              children: const [
+                SafeArea(bottom: false, child: _NavInset(child: HomePage())),
+                SafeArea(bottom: false, child: _NavInset(child: HistoryPage())),
+                SafeArea(bottom: false, child: _NavInset(child: SettingsPage())),
+              ],
             ),
-          ),
-        ],
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: LiquidGlassNavBar(
+                items: _navItems,
+                currentIndex: _currentIndex,
+                onTap: _onTabChanged,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 /// Memberi tahu halaman bahwa bagian bawah layar dipakai bar glass, lewat
-/// `MediaQuery.padding.bottom`. ListView, GridView, dan SafeArea di dalam
+/// [MediaQuery.padding.bottom]. ListView, GridView, dan SafeArea di dalam
 /// halaman otomatis menambah ruang bawah, jadi konten bisa di-scroll sampai
-/// lewat bar (dan terlihat membias di bawah kaca) tanpa item terakhir
-/// tertutup.
-///
-/// Kalau sebuah halaman memakai `padding:` sendiri pada scrollable-nya,
-/// tambahkan `MediaQuery.paddingOf(context).bottom` ke padding bawahnya.
+/// lewat bar tanpa item terakhir tertutup.
 class _NavInset extends StatelessWidget {
   const _NavInset({required this.child});
 
