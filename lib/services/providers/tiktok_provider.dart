@@ -157,6 +157,11 @@ class TikTokPrimaryProvider implements MediaProvider {
   @override
   bool canHandle(String url) => _canHandleTikTok(url);
 
+  /// Klasifikasi post TikTok pakai teks tombol (bukti LIVE 2026-10-24):
+  /// - 'Download Image' → foto slide (photomode);
+  /// - 'Download MP3' → audio post;
+  /// - tombol video lain / href .mp4 / token → video.
+  /// href non-HTTP ('#', '/') dibuang ulang tanpa latihan.
   @override
   Future<MediaInfo> fetchInfo(String url) async {
     final cfg = await RemoteConfig.instance.get(_kPrimaryId);
@@ -185,11 +190,34 @@ class TikTokPrimaryProvider implements MediaProvider {
       );
     }
 
-    // Parse HTML response — link ada di atribut href, urutan dokumen
-    // dipertahankan (link tombol utama = snapcdn dulu).
     final html = (body['data'] as String? ?? '');
-    final links = _extractLinks(html);
-    if (links.isEmpty) {
+    final photos = <String>[];
+    final videos = <String>[];
+    String? audio;
+    final seen = <String>{};
+    for (final m in RegExp(
+      r'<a\b[^>]*?href="([^"]*)"[^>]*>(.*?)</a>',
+      dotAll: true,
+    ).allMatches(html)) {
+      final href = m.group(1)!;
+      if (!href.startsWith('http') || !seen.add(href)) continue;
+      final text = ((m.group(2) ?? '').replaceAll(RegExp(r'<[^>]+>'), ' '))
+          .toUpperCase();
+      if (text.contains('IMAGE') ||
+          text.contains('PHOTO') ||
+          text.contains('FOTO') ||
+          text.contains('GAMBAR')) {
+        photos.add(href);
+      } else if (text.contains('MP3') ||
+          text.contains('AUDIO') ||
+          text.contains('MUSIC')) {
+        audio ??= href;
+      } else {
+        videos.add(href);
+      }
+    }
+
+    if (photos.isEmpty && videos.isEmpty) {
       throw const ProviderException(
         message: 'Tidak ada link ditemukan di respons tikdownloader.',
         kind: ProviderErrorKind.noResult,
@@ -199,24 +227,45 @@ class TikTokPrimaryProvider implements MediaProvider {
     // Extract title dari HTML jika ada (masih ter-encode → decode).
     final titleMatch = RegExp(r'<h3[^>]*>([^<]+)<\/h3>').firstMatch(html);
     final rawTitle = titleMatch?.group(1)?.trim() ?? '';
-    final audioLink = _extractAudioLink(html);
+    final thumbMatch =
+        RegExp(r'<img[^>]*src="(https?://[^"]+)"').firstMatch(html);
+    final isPhotoPost = photos.isNotEmpty;
 
-    return MediaInfo(
-      title: rawTitle.isEmpty ? 'TikTok Video' : _unescapeHtml(rawTitle),
-      author: 'TikTok',
-      thumbnail: null,
-      durationSec: null,
-      qualities: [
-        MediaQuality(label: 'HD (No Watermark)', itag: links.first),
-        for (final extra in links.skip(1))
-          MediaQuality(label: 'Video (alt)', itag: extra),
+    final qualities = <MediaQuality>[
+      for (var i = 0; i < videos.length; i++)
+        MediaQuality(
+          label: i == 0 && (videos.length > 1 || photos.isEmpty)
+              ? 'HD (No Watermark)'
+              : 'Video (alt)',
+          itag: videos[i],
+        ),
+      for (var i = 0; i < photos.length; i++)
+        MediaQuality(
+          label: photos.length == 1
+              ? 'Foto HD'
+              : 'Foto HD ${i + 1}',
+          itag: photos[i],
+          extension: _photoExtFromToken(photos[i]),
+        ),
+      // Fotomode TikTok selalu punya musik: MP3 dari tombol Download MP3.
+      // Jangan pakai foto sebagai fallback MP3 (palsu).
+      if (audio != null || (videos.isNotEmpty && !isPhotoPost))
         MediaQuality(
           label: 'Audio MP3',
-          itag: audioLink ?? links.first,
+          itag: audio ?? videos.first,
           extension: 'mp3',
           hasAudio: true,
         ),
-      ],
+    ];
+
+    return MediaInfo(
+      title: rawTitle.isEmpty
+          ? (isPhotoPost ? 'TikTok Photo' : 'TikTok Video')
+          : _unescapeHtml(rawTitle),
+      author: 'TikTok',
+      thumbnail: thumbMatch?.group(1),
+      durationSec: null,
+      qualities: qualities,
       source: 'third-party',
       providerName: providerName,
     );
@@ -225,30 +274,30 @@ class TikTokPrimaryProvider implements MediaProvider {
   @override
   Future<String> fetchDownloadUrl(String url, {String quality = 'best'}) async =>
       _resolveQuality(await fetchInfo(url), quality);
+}
 
-  String? _extractAudioLink(String html) {
-    final pattern = RegExp(
-      r'href="([^"]*(?:\.mp3|snapcdn\.app/get[^"]*type=audio)[^"]*)"',
-      caseSensitive: false,
-    );
-    for (final m in pattern.allMatches(html)) {
-      final link = m.group(1);
-      if (link != null && link.startsWith('http')) {
-        return link;
-      }
-    }
-    return null;
+/// Ekstensi foto dari payload token snapcdn ({"url":"...image.jpeg?..."})
+/// atau dari URL langsung. Default jpg (bukti LIVE: photomode .jpeg).
+String _photoExtFromToken(String url, {String fallback = 'jpg'}) {
+  var haystack = url.toLowerCase();
+  final m = RegExp(r'token=([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)')
+      .firstMatch(url);
+  if (m != null) {
+    try {
+      var b64 = m
+          .group(1)!
+          .split('.')[1]
+          .replaceAll('-', '+')
+          .replaceAll('_', '/');
+      b64 = b64.padRight(b64.length + (4 - b64.length % 4) % 4, '=');
+      haystack =
+          utf8.decode(base64.decode(b64), allowMalformed: true).toLowerCase();
+    } catch (_) {}
   }
-
-  List<String> _extractLinks(String html) {
-    final pattern =
-        RegExp(r'href="(https://[^"]*(?:\.mp4|snapcdn\.app/get)[^"]*)"');
-    return pattern
-        .allMatches(html)
-        .map((m) => m.group(1)!)
-        .where((l) => l.isNotEmpty)
-        .toList();
-  }
+  if (haystack.contains('.png')) return 'png';
+  if (haystack.contains('.webp')) return 'webp';
+  if (haystack.contains('.heic')) return 'heic';
+  return fallback;
 }
 
 class TikWmProvider implements MediaProvider {
@@ -280,6 +329,60 @@ class TikWmProvider implements MediaProvider {
     }
     final data = (body['data'] as Map).cast<String, dynamic>();
 
+    final author = data['author'];
+    final nickname =
+        author is Map ? (author['nickname'] ?? '').toString() : '';
+    final duration = data['duration'];
+
+    String toFullUrl(String url) =>
+        url.startsWith('http') ? url : 'https://www.tikwm.com$url';
+
+    // Bukti LIVE (2026-10-24, post photomode @studiis.id): tikwm mengembalikan
+    // `images` berisi slide foto + `music` + juga slideshow `play`. Post foto
+    // harus tampil sebagai FOTO (slider), bukan video slideshow — maka cabang
+    // images dieksekusi lebih dulu dan play/wmplay diabaikan.
+    final imagesRaw = data['images'];
+    final images = imagesRaw is List
+        ? imagesRaw
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList()
+        : const <String>[];
+    if (images.isNotEmpty) {
+      final qualities = <MediaQuality>[
+        for (var i = 0; i < images.length; i++)
+          MediaQuality(
+            label: images.length == 1
+                ? 'Foto HD'
+                : 'Foto HD ${i + 1}',
+            itag: toFullUrl(images[i]),
+            extension: _photoExtFromToken(toFullUrl(images[i])),
+          ),
+        if ((data['music'] ?? '').toString().isNotEmpty)
+          MediaQuality(
+            label: 'Audio MP3',
+            itag: toFullUrl((data['music'] as String?)!),
+            extension: 'mp3',
+            hasAudio: true,
+          ),
+      ];
+      if (qualities.isEmpty) {
+        throw const ProviderException(
+          message: 'tikwm: tidak ada URL media.',
+          kind: ProviderErrorKind.noResult,
+        );
+      }
+      return MediaInfo(
+        title: (data['title'] ?? 'TikTok Photo').toString(),
+        author: nickname.isEmpty ? 'TikTok' : nickname,
+        thumbnail: data['cover'] as String?,
+        durationSec: null,
+        qualities: qualities,
+        source: 'third-party',
+        providerName: providerName,
+      );
+    }
+
     final play = (data['play'] ?? '').toString();
     final wmplay = (data['wmplay'] ?? '').toString();
     final music = (data['music'] ?? '').toString();
@@ -289,13 +392,6 @@ class TikWmProvider implements MediaProvider {
         kind: ProviderErrorKind.noResult,
       );
     }
-    final author = data['author'];
-    final nickname =
-        author is Map ? (author['nickname'] ?? '').toString() : '';
-    final duration = data['duration'];
-
-    String toFullUrl(String url) =>
-        url.startsWith('http') ? url : 'https://www.tikwm.com$url';
 
     final audioUrl = music.isNotEmpty
         ? toFullUrl(music)

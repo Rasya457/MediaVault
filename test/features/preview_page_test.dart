@@ -260,4 +260,121 @@ void main() {
       expect(batch.items[2].status, BatchItemStatus.queued);
     });
   });
+
+  group('carousel foto (album murni)', () {
+    const albumInfo = MediaInfo(
+      title: 'Carousel Foto',
+      author: 'Akun Uji',
+      thumbnail: null,
+      durationSec: null,
+      qualities: [
+        MediaQuality(label: 'Foto HD 1', itag: 'https://cdn/p1.jpg', extension: 'jpg'),
+        MediaQuality(label: 'Foto HD 2', itag: 'https://cdn/p2.jpg', extension: 'jpg'),
+      ],
+      source: 'third-party',
+      providerName: 'InDown',
+    );
+
+    testWidgets('slider foto bisa di-swipe + UNDUH SEMUA FOTO',
+        (tester) async {
+      tallSurface(tester);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: PreviewPage(info: albumInfo, sourceUrl: 'https://x'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Mode slider: tanpa pilihan kualitas, ada counter foto + unduh semua.
+      expect(find.text('PILIH KUALITAS'), findsNothing);
+      expect(find.byType(PageView), findsOneWidget);
+      expect(find.text('1/2'), findsOneWidget);
+      expect(find.text('FOTO (2)'), findsOneWidget);
+      expect(find.textContaining('UNDUH SEMUA FOTO'), findsOneWidget);
+
+      // Swipe kiri → pindah ke foto ke-2 (drag harus lewat setengah layar).
+      await tester.fling(find.byType(PageView), const Offset(-700, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(find.text('2/2'), findsOneWidget);
+    });
+
+    testWidgets('post berisi video: mode kualitas biasa, tanpa unduh semua',
+        (tester) async {
+      const mixedInfo = MediaInfo(
+        title: 'Carousel Campur Video',
+        author: 'Akun Uji',
+        thumbnail: null,
+        durationSec: null,
+        qualities: [
+          MediaQuality(label: 'Video HD', itag: 'https://cdn/v.mp4'),
+          MediaQuality(label: 'Foto HD 1', itag: 'https://cdn/p1.jpg', extension: 'jpg'),
+          MediaQuality(label: 'Foto HD 2', itag: 'https://cdn/p2.jpg', extension: 'jpg'),
+          MediaQuality(
+            label: 'Audio MP3',
+            itag: 'https://cdn/v.mp4',
+            extension: 'mp3',
+            hasAudio: true,
+          ),
+        ],
+        source: 'third-party',
+        providerName: 'InDown',
+      );
+      tallSurface(tester);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: PreviewPage(info: mixedInfo, sourceUrl: 'https://x'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Video → bukan mode album: pilihan kualitas + MP3 + tombol UNDUH.
+      expect(find.text('PILIH KUALITAS'), findsOneWidget);
+      expect(find.text('Video HD'), findsOneWidget);
+      expect(find.text('Foto HD 1'), findsOneWidget);
+      expect(find.text('Audio MP3'), findsOneWidget);
+      expect(find.text('UNDUH'), findsOneWidget);
+      expect(find.textContaining('UNDUH SEMUA'), findsNothing);
+      expect(find.byType(PageView), findsNothing);
+    });
+
+    testWidgets('album fotomode TikTok ber-musik: slider + unduh semua foto + tile audio',
+        (tester) async {
+      const tiktokPhoto = MediaInfo(
+        title: 'TikTok Foto',
+        author: 'studiis.id',
+        thumbnail: 'https://cdn/cover.jpeg',
+        durationSec: null,
+        qualities: [
+          MediaQuality(label: 'Foto HD 1', itag: 'https://cdn/p1.jpeg', extension: 'jpg'),
+          MediaQuality(label: 'Foto HD 2', itag: 'https://cdn/p2.jpeg', extension: 'jpg'),
+          MediaQuality(label: 'Foto HD 3', itag: 'https://cdn/p3.jpeg', extension: 'jpg'),
+          MediaQuality(
+            label: 'Audio MP3',
+            itag: 'https://cdn/music.mp3',
+            extension: 'mp3',
+            hasAudio: true,
+          ),
+        ],
+        source: 'third-party',
+        providerName: 'TikDownloader',
+      );
+      tallSurface(tester);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: PreviewPage(info: tiktokPhoto, sourceUrl: 'https://x'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Album tetap aktif walau ada MP3 (fotomode selalu ada musik).
+      expect(find.text('PILIH KUALITAS'), findsNothing);
+      expect(find.byType(PageView), findsOneWidget);
+      expect(find.text('FOTO (3)'), findsOneWidget);
+      expect(find.textContaining('UNDUH SEMUA FOTO'), findsOneWidget);
+      // Seksi audio terpisah; unduh semua tetap hanya foto.
+      expect(find.text('AUDIO (1)'), findsOneWidget);
+      expect(find.text('Musik dari post ini'), findsOneWidget);
+      expect(find.text('Audio MP3'), findsOneWidget);
+    });
+  });
 }

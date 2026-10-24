@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediavault/services/providers/tiktok_provider.dart';
 import 'package:mediavault/services/providers/provider.dart';
@@ -137,6 +138,85 @@ void main() {
       expect(info.qualities.length, equals(3));
       expect(info.qualities.any((q) => q.label == 'Audio MP3'), isTrue);
       expect(info.providerName, equals('TikWm'));
+    });
+  });
+
+  // Regresi post fotomode TikTok (dipanen LIVE 24 Okt 2026 dari
+  // tikdownloader.io + tikwm.com dengan URL asli
+  // @studiis.id/photo/7699114184557989138 — 7 slide foto).
+  // Bug lama: seluruh anchor (termasuk Download Image/MP3) diamankan
+  // sebagai kualitas "video" sehingga pratinjau post foto tampil video.
+  group('TikTok post fotomode (URL foto)', () {
+    const photoUrl =
+        'https://www.tiktok.com/@studiis.id/photo/7699114184557989138';
+
+    test('LIVE primary: 7 Foto HD jpg + Audio MP3, tanpa kualitas video',
+        () async {
+      final body =
+          File('test/fixtures/tikdown_photo_post.json').readAsStringSync();
+      setupMockDio(postPlain: body);
+      final info =
+          await TikTokPrimaryProvider().fetchInfo(photoUrl);
+
+      expect(info.title, startsWith('Siapa nih'));
+      final photos =
+          info.qualities.where((q) => q.extension != 'mp3').toList();
+      expect(photos.length, equals(7));
+      for (var i = 0; i < photos.length; i++) {
+        expect(photos[i].label, equals('Foto HD ${i + 1}'));
+        expect(photos[i].extension, equals('jpg'));
+        expect(photos[i].itag, startsWith('https://dl.snapcdn.app/get?token='));
+      }
+      final mp3 = info.qualities.last;
+      expect(mp3.label, equals('Audio MP3'));
+      expect(mp3.extension, equals('mp3'));
+      expect(mp3.hasAudio, isTrue);
+      expect(
+        info.qualities.any((q) => q.label == 'HD (No Watermark)'),
+        isFalse,
+      );
+    });
+
+    test('LIVE tikwm: images[] jadi Foto HD, slideshow play diabaikan',
+        () async {
+      final body =
+          File('test/fixtures/tikwm_photo_post.json').readAsStringSync();
+      setupMockDio(getPlain: body);
+      final info = await TikWmProvider().fetchInfo(photoUrl);
+
+      final photos =
+          info.qualities.where((q) => q.extension != 'mp3').toList();
+      expect(photos.length, equals(7));
+      for (var i = 0; i < photos.length; i++) {
+        expect(photos[i].label, equals('Foto HD ${i + 1}'));
+        expect(photos[i].extension, equals('jpg'));
+        expect(photos[i].itag, startsWith('https://'));
+      }
+      expect(info.qualities.last.label, equals('Audio MP3'));
+      expect(
+        info.qualities.any((q) => q.label == 'HD (No Watermark)'),
+        isFalse,
+      );
+      expect(info.author, equals('studiis.id'));
+    });
+
+    test('klasifikasi teks: tombol MP3 & "#" tidak bocor jadi video', () async {
+      setupMockDio(
+        postResponseData: {
+          'status': 'ok',
+          'data':
+              '<div><h3>Fotonya</h3>'
+              '<a href="#">Download Video</a>'
+              '<a href="https://dl.snapcdn.app/get?token=t1">Download MP3</a>'
+              '<a href="https://dl.snapcdn.app/get?token=img-jpeg-x">'
+              'Download Image</a></div>',
+        },
+      );
+      final info = await TikTokPrimaryProvider().fetchInfo(photoUrl);
+      expect(info.qualities.length, equals(2));
+      expect(info.qualities[0].label, equals('Foto HD'));
+      expect(info.qualities[1].label, equals('Audio MP3'));
+      expect(info.qualities.any((q) => q.label.contains('Video')), isFalse);
     });
   });
 }

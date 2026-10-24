@@ -121,17 +121,21 @@ class UniversalMediaProvider implements MediaProvider {
               ));
             }
           }
-          // Tambahkan opsi MP3 dari video pertama jika ada
-          final firstVideo = qualities.firstWhere(
-            (q) => q.extension == 'mp4',
-            orElse: () => qualities.first,
-          );
-          qualities.add(MediaQuality(
-            label: 'Audio MP3',
-            itag: firstVideo.itag,
-            extension: 'mp3',
-            hasAudio: true,
-          ));
+          // Opsi MP3 hanya bila konten benar-benar punya video — album foto
+          // murni tidak diberi Audio MP3 palsu dari URL foto.
+          final firstVideo = qualities
+              .firstWhere(
+                (q) => q.extension == 'mp4',
+                orElse: () => const MediaQuality(label: '', itag: ''),
+              );
+          if (firstVideo.itag.isNotEmpty) {
+            qualities.add(MediaQuality(
+              label: 'Audio MP3',
+              itag: firstVideo.itag,
+              extension: 'mp3',
+              hasAudio: true,
+            ));
+          }
 
           return MediaInfo(
             title: _guessTitle(cleanUrl),

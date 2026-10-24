@@ -12,6 +12,9 @@ import 'widgets/video_preview.dart';
 /// unduh dengan progress. [controller] opsional untuk test.
 /// Untuk playlist/album Spotify tampil mode khusus: gambar cover playlist,
 /// daftar lagu tanpa cover art, dan tombol UNDUH SEMUA.
+/// Untuk carousel foto tampil slider foto yang bisa di-swipe + UNDUH SEMUA
+/// FOTO. Post berisi video (galat campuran foto+video) selalu tampil mode
+/// video biasa: pilihan kualitas termasuk foto, tanpa tombol unduh semua.
 class PreviewPage extends StatefulWidget {
   const PreviewPage({
     super.key,
@@ -45,20 +48,32 @@ class _PreviewPageState extends State<PreviewPage> {
       widget.info.qualities.length > 1 &&
       widget.info.qualities.every((q) => q.extension == 'mp3');
 
-  /// Mode album foto (Instagram carousel): ada ≥2 item foto.
-  /// Video dengan beberapa pilihan kualitas (720p/360p/mp3) TIDAK masuk sini.
+  /// Mode album foto (Instagram carousel murni): ada ≥2 item foto dan
+  /// TANPA video. Post yang berisi video (termasuk campuran foto+video)
+  /// dan video dengan beberapa pilihan kualitas tampil sebagai mode biasa:
+  /// pilih kualitas + MP3, tanpa tombol unduh semua.
   bool get _isMediaAlbum {
     final qs = widget.info.qualities;
-    if (qs.length <= 1) return false;
-    final photoItems = qs.where((q) =>
-        q.extension == 'jpg' ||
-        q.extension == 'jpeg' ||
-        q.extension == 'png' ||
-        q.extension == 'webp' ||
-        q.extension == 'heic');
-    // Minimal 2 foto = mode album carousel.
-    return photoItems.length >= 2;
+    var photos = 0;
+    var videos = 0;
+    for (final q in qs) {
+      if (_isPhotoExtension(q.extension)) {
+        photos++;
+      } else if (q.extension == 'mp4' ||
+          q.extension == 'webm' ||
+          q.extension == 'mov') {
+        videos++;
+      }
+    }
+    return photos >= 2 && videos == 0;
   }
+
+  static bool _isPhotoExtension(String ext) =>
+      ext == 'jpg' ||
+      ext == 'jpeg' ||
+      ext == 'png' ||
+      ext == 'webp' ||
+      ext == 'heic';
 
   @override
   void initState() {
@@ -523,12 +538,7 @@ class _PreviewPageState extends State<PreviewPage> {
   Widget _buildAlbumSlider() {
     final scheme = MoriScheme.of(context);
     final photos = widget.info.qualities
-        .where((q) =>
-            q.extension == 'jpg' ||
-            q.extension == 'jpeg' ||
-            q.extension == 'png' ||
-            q.extension == 'webp' ||
-            q.extension == 'heic')
+        .where((q) => _isPhotoExtension(q.extension))
         .toList();
     if (photos.isEmpty) return _buildPlaylistCover(widget.info.thumbnail);
 
@@ -591,6 +601,23 @@ class _PreviewPageState extends State<PreviewPage> {
 
   List<Widget> _albumBatchBody() {
     final scheme = MoriScheme.of(context);
+    // Post foto TikTok (photomode) juga punya musik: sediakan tile MP3
+    // tambahan di bawah daftar foto, tanpa ikut UNDUH SEMUA FOTO.
+    final mp3Qualities = widget.info.qualities
+        .where((q) => q.extension == 'mp3')
+        .toList();
+    final audioItems = <BatchItem>[];
+    for (final q in mp3Qualities) {
+      audioItems.add(BatchItem(
+        url: q.itag,
+        filename: '${_sanitize(widget.info.title)}_audio.mp3',
+        title: 'Audio MP3',
+        artist: widget.info.author,
+        extension: 'mp3',
+        headers: widget.info.downloadHeaders,
+        thumbnail: widget.info.thumbnail,
+      ));
+    }
     return [
       AnimatedBuilder(
         animation: _batch,
@@ -643,6 +670,46 @@ class _PreviewPageState extends State<PreviewPage> {
                         : () => _downloadOne(items[i]),
                   ),
                 ),
+              if (audioItems.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'AUDIO (${audioItems.length})',
+                      style: TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: MoriText.labelLetterSpacing,
+                        color: scheme.secondary,
+                      ),
+                    ),
+                    Text(
+                      'Musik dari post ini',
+                      style: TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: scheme.faint,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                for (var i = 0; i < audioItems.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: ProgressTile(
+                      key: ValueKey('album-audio-$i-${audioItems[i].url}'),
+                      index: items.length + i + 1,
+                      item: audioItems[i],
+                      onDownload: _batch.running
+                          ? null
+                          : () => _downloadOne(audioItems[i]),
+                    ),
+                  ),
+              ],
               const SizedBox(height: 8),
             ],
           );
