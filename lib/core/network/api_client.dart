@@ -43,8 +43,11 @@ class _RetryInterceptor extends Interceptor {
     final req = err.requestOptions;
     final isGet = req.method.toUpperCase() == 'GET';
     final alreadyRetried = req.extra['_retried'] == true;
+    // Permintaan yang bertanda extra 'mvNoRetry' dikecualikan
+    // (mis. fetch OTA config — jangan menggandakan waktu tunggu).
+    final noRetry = req.extra['mvNoRetry'] == true;
 
-    if (isGet && !alreadyRetried && _shouldRetry(err.type)) {
+    if (isGet && !alreadyRetried && !noRetry && _shouldRetry(err.type)) {
       req.extra['_retried'] = true;
       try {
         final response = await _dio.fetch<dynamic>(req);
