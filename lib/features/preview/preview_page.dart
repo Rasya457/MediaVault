@@ -37,27 +37,27 @@ class _PreviewPageState extends State<PreviewPage> {
   bool _ownsController = false;
   bool _ownsBatch = false;
   int? _activePreviewTrackIndex;
+  // Index foto yang aktif di slider preview album
+  int _albumPreviewIndex = 0;
 
   /// Mode playlist/album Spotify: semua pilihan berupa MP3 dan lebih dari satu lagu.
   bool get _isPlaylist =>
       widget.info.qualities.length > 1 &&
       widget.info.qualities.every((q) => q.extension == 'mp3');
 
-  /// Mode album media (Instagram carousel/TikTok foto): ada lebih dari satu
-  /// item foto/video (bukan semua MP3). Satu item saja tetap tampil biasa.
+  /// Mode album foto (Instagram carousel): ada ≥2 item foto.
+  /// Video dengan beberapa pilihan kualitas (720p/360p/mp3) TIDAK masuk sini.
   bool get _isMediaAlbum {
     final qs = widget.info.qualities;
     if (qs.length <= 1) return false;
-    final mediaItems = qs.where((q) =>
+    final photoItems = qs.where((q) =>
         q.extension == 'jpg' ||
         q.extension == 'jpeg' ||
         q.extension == 'png' ||
         q.extension == 'webp' ||
-        q.extension == 'heic' ||
-        q.extension == 'mp4' ||
-        q.extension == 'mov');
-    // Minimal 2 foto/video = mode album.
-    return mediaItems.length >= 2;
+        q.extension == 'heic');
+    // Minimal 2 foto = mode album carousel.
+    return photoItems.length >= 2;
   }
 
   @override
@@ -319,7 +319,9 @@ class _PreviewPageState extends State<PreviewPage> {
                 ? (_activePreviewTrackIndex != null
                     ? _buildPlaylistAudioPreview(thumb, info)
                     : _buildPlaylistCover(thumb))
-                : _buildPreview(selected, thumb, info),
+                : _isMediaAlbum
+                    ? _buildAlbumSlider()
+                    : _buildPreview(selected, thumb, info),
             const SizedBox(height: 16),
             Text(
               info.title,
@@ -515,7 +517,77 @@ class _PreviewPageState extends State<PreviewPage> {
     ];
   }
 
-  // ---------- Mode album foto/video (Instagram carousel, dll) ----------
+  // ---------- Mode album foto (Instagram carousel, dll) ----------
+
+  /// Slider foto untuk carousel. Swipe kiri/kanan antar foto.
+  Widget _buildAlbumSlider() {
+    final scheme = MoriScheme.of(context);
+    final photos = widget.info.qualities
+        .where((q) =>
+            q.extension == 'jpg' ||
+            q.extension == 'jpeg' ||
+            q.extension == 'png' ||
+            q.extension == 'webp' ||
+            q.extension == 'heic')
+        .toList();
+    if (photos.isEmpty) return _buildPlaylistCover(widget.info.thumbnail);
+
+    final total = photos.length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          height: 320,
+          child: PageView.builder(
+            onPageChanged: (i) => setState(() => _albumPreviewIndex = i),
+            itemCount: total,
+            itemBuilder: (ctx, i) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: _AdaptiveImage(
+                  key: ValueKey('album-slide-$i-${photos[i].itag}'),
+                  url: photos[i].itag,
+                  fallbackUrl: widget.info.thumbnail,
+                  maxHeight: 312,
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Dot indicators — melebar jika aktif
+            ...List.generate(total, (i) {
+              final active = _albumPreviewIndex == i;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: active ? 18 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: active ? scheme.accent : scheme.hairline,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              );
+            }),
+            const SizedBox(width: 10),
+            Text(
+              '${_albumPreviewIndex + 1}/$total',
+              style: TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: scheme.secondary,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 
   List<Widget> _albumBatchBody() {
     final scheme = MoriScheme.of(context);
@@ -524,21 +596,20 @@ class _PreviewPageState extends State<PreviewPage> {
         animation: _batch,
         builder: (context, _) {
           final items = _batch.items;
-          final hasPhotos = items.any((i) => i.isImage);
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _BatchSection(
                 batch: _batch,
                 onDownloadAll: _downloadAll,
-                label: hasPhotos ? 'UNDUH SEMUA FOTO/VIDEO' : 'UNDUH SEMUA',
+                label: 'UNDUH SEMUA FOTO (${items.length})',
               ),
               const SizedBox(height: 18),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    '${hasPhotos ? 'FOTO & VIDEO' : 'MEDIA'} (${items.length})',
+                    'FOTO (${items.length})',
                     style: TextStyle(
                       fontFamily: 'Geist',
                       fontSize: 13,
@@ -548,7 +619,7 @@ class _PreviewPageState extends State<PreviewPage> {
                     ),
                   ),
                   Text(
-                    'Ketuk untuk unduh satu per satu',
+                    'Unduh satu per satu',
                     style: TextStyle(
                       fontFamily: 'Geist',
                       fontSize: 11,
@@ -558,27 +629,20 @@ class _PreviewPageState extends State<PreviewPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: 1,
-                ),
-                itemCount: items.length,
-                itemBuilder: (context, i) {
-                  return _AlbumItemCard(
-                    item: items[i],
+              const SizedBox(height: 10),
+              // Daftar foto sebagai list tile (pakai ProgressTile tanpa tombol play)
+              for (var i = 0; i < items.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ProgressTile(
+                    key: ValueKey('album-$i-${items[i].url}'),
                     index: i + 1,
+                    item: items[i],
                     onDownload: _batch.running
                         ? null
                         : () => _downloadOne(items[i]),
-                  );
-                },
-              ),
+                  ),
+                ),
               const SizedBox(height: 8),
             ],
           );
@@ -1034,193 +1098,3 @@ class _BatchSection extends StatelessWidget {
   }
 }
 
-/// Card item album foto/video: thumbnail foto + status download + tombol unduh.
-class _AlbumItemCard extends StatelessWidget {
-  const _AlbumItemCard({
-    required this.item,
-    required this.index,
-    this.onDownload,
-  });
-
-  final BatchItem item;
-  final int index;
-  final VoidCallback? onDownload;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = MoriScheme.of(context);
-    final isPhoto = item.isImage;
-    return Container(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: BorderRadius.circular(MoriRadius.card),
-        border: Border.all(
-          color: item.status == BatchItemStatus.done
-              ? scheme.success.withValues(alpha: 0.5)
-              : item.status == BatchItemStatus.failed
-                  ? scheme.error.withValues(alpha: 0.4)
-                  : scheme.hairline,
-          width: item.status == BatchItemStatus.done ||
-                  item.status == BatchItemStatus.failed
-              ? 1.5
-              : MoriBorder.tile,
-        ),
-        boxShadow: MoriShadow.product,
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Thumbnail foto / ikon video
-          if (item.url.startsWith('http'))
-            Image.network(
-              item.url,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Center(
-                child: Icon(
-                  isPhoto ? Icons.image_outlined : Icons.movie_outlined,
-                  color: scheme.secondary,
-                  size: 40,
-                ),
-              ),
-            )
-          else
-            Center(
-              child: Icon(
-                isPhoto ? Icons.image_outlined : Icons.movie_outlined,
-                color: scheme.secondary,
-                size: 40,
-              ),
-            ),
-
-          // Overlay gradien bawah
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.65),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    isPhoto ? Icons.photo : Icons.videocam,
-                    color: Colors.white,
-                    size: 13,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    item.title,
-                    style: const TextStyle(
-                      fontFamily: 'Geist',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Tombol unduh / status
-          Positioned(
-            top: 6,
-            right: 6,
-            child: _buildStatusBadge(scheme),
-          ),
-
-          // Tap to download
-          if (item.status == BatchItemStatus.queued ||
-              item.status == BatchItemStatus.failed)
-            Positioned.fill(
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: onDownload,
-                  borderRadius: BorderRadius.circular(MoriRadius.card),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusBadge(MoriScheme scheme) {
-    switch (item.status) {
-      case BatchItemStatus.queued:
-        return GestureDetector(
-          onTap: onDownload,
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.55),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.arrow_downward_rounded,
-              color: Colors.white,
-              size: 16,
-            ),
-          ),
-        );
-      case BatchItemStatus.downloading:
-        return Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.55),
-            shape: BoxShape.circle,
-          ),
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              value: item.progress > 0 ? item.progress.clamp(0.0, 1.0) : null,
-              strokeWidth: 2.5,
-              color: Colors.white,
-              backgroundColor: Colors.white24,
-            ),
-          ),
-        );
-      case BatchItemStatus.done:
-        return Container(
-          padding: const EdgeInsets.all(5),
-          decoration: BoxDecoration(
-            color: scheme.success.withValues(alpha: 0.9),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.check_rounded,
-            color: Colors.white,
-            size: 16,
-          ),
-        );
-      case BatchItemStatus.failed:
-        return GestureDetector(
-          onTap: onDownload,
-          child: Container(
-            padding: const EdgeInsets.all(5),
-            decoration: BoxDecoration(
-              color: scheme.error.withValues(alpha: 0.85),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.refresh_rounded,
-              color: Colors.white,
-              size: 16,
-            ),
-          ),
-        );
-    }
-  }
-}
